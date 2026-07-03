@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vue-tsc && rsbuild build",
+    "build": "vue-tsc && rsbuild build && cp -r dist/* docs/",
     "dev": "rsbuild --open",
     "preview": "rsbuild preview"
   },

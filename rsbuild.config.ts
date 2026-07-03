@@ -1,6 +1,8 @@
 import { defineConfig } from '@rsbuild/core';
+import { pluginVue } from '@rsbuild/plugin-vue';
 
 export default defineConfig({
+  plugins: [pluginVue()],
   source: {
     // Explicitly defines the TypeScript compilation entry point
     entry: {
@@ -10,6 +12,7 @@ export default defineConfig({
   html: {
     // Defines the source HTML template to inject assets into
     template: './src/index.html',
+    inject: 'body',
   },
   output: {
     // Forces the bundler to emit scripts inline within <script> tags
