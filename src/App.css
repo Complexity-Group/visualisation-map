@@ -1,0 +1,441 @@
+.dashboard {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  transition: background-color 0.3s ease;
+}
+
+.dashboard.dark {
+  background-color: #0b0f19;
+  color: #f8fafc;
+}
+
+.dashboard.light {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Sidebar Styling */
+.sidebar {
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  z-index: 1000;
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.15);
+  overflow-y: auto;
+  flex-shrink: 0;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.dark .sidebar {
+  background: rgba(11, 15, 25, 0.85);
+  backdrop-filter: blur(20px) saturate(140%);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.light .sidebar {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px) saturate(140%);
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.sidebar-header {
+  margin-bottom: 24px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-icon {
+  color: #3b82f6;
+  filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.4));
+}
+
+.logo h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.5px;
+}
+
+.dark .logo h1 {
+  background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.light .logo h1 {
+  color: #0f172a;
+}
+
+.subtitle {
+  font-size: 13px;
+  margin: 4px 0 0 0;
+}
+
+.dark .subtitle {
+  color: #64748b;
+}
+
+.light .subtitle {
+  color: #475569;
+}
+
+.sidebar-section {
+  margin-bottom: 24px;
+}
+
+.sidebar-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.dark .sidebar-section h3 {
+  color: #475569;
+}
+
+.light .sidebar-section h3 {
+  color: #94a3b8;
+}
+
+/* Theme Button */
+.theme-btn {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark .theme-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+
+.dark .theme-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.light .theme-btn {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: #0f172a;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.light .theme-btn:hover {
+  background: #f8fafc;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.08);
+}
+
+/* Location Cards */
+.location-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.location-card {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dark .location-card {
+  background: rgba(30, 41, 59, 0.35);
+  border-color: rgba(255, 255, 255, 0.03);
+  color: #cbd5e1;
+}
+
+.dark .location-card:hover {
+  background: rgba(30, 41, 59, 0.7);
+  border-color: rgba(59, 130, 246, 0.3);
+  transform: translateY(-1px);
+}
+
+.dark .location-card.active {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.1);
+}
+
+.light .location-card {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.04);
+  color: #334155;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.light .location-card:hover {
+  background: #f8fafc;
+  border-color: rgba(59, 130, 246, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.light .location-card.active {
+  background: rgba(59, 130, 246, 0.05);
+  border-color: #3b82f6;
+  color: #1e3a8a;
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.08);
+}
+
+.location-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.card-details {
+  flex-grow: 1;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.dark .icon {
+  background: rgba(59, 130, 246, 0.12);
+  color: #60a5fa;
+}
+
+.light .icon {
+  background: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+}
+
+.location-card:hover .icon {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.loc-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 2px 0;
+}
+
+.loc-coords {
+  font-size: 11px;
+  font-family: monospace;
+  margin: 0;
+}
+
+.dark .loc-coords {
+  color: #64748b;
+}
+
+.light .loc-coords {
+  color: #94a3b8;
+}
+
+.location-card.active .loc-coords {
+  color: #3b82f6;
+}
+
+/* Stats Styling */
+.quick-stats .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.stat-box {
+  border-radius: 10px;
+  padding: 10px 6px;
+  text-align: center;
+  transition: background-color 0.3s ease;
+}
+
+.dark .stat-box {
+  background: rgba(30, 41, 59, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.light .stat-box {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.stat-val {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: #3b82f6;
+}
+
+.stat-label {
+  display: block;
+  font-size: 9px;
+  text-transform: uppercase;
+  margin-top: 4px;
+  font-weight: 550;
+}
+
+.dark .stat-label {
+  color: #475569;
+}
+
+.light .stat-label {
+  color: #94a3b8;
+}
+
+/* Map Container */
+.map-view {
+  flex-grow: 1;
+  height: 100%;
+  position: relative;
+}
+
+.map-element {
+  width: 100%;
+  height: 100%;
+}
+
+/* Custom Leaflet HTML Popup Styling (Positioned Next to Interest Point) */
+.custom-leaflet-popup .leaflet-popup-content-wrapper {
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(16px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  color: #f8fafc;
+  padding: 0;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  max-width: 280px;
+}
+
+.custom-leaflet-popup .leaflet-popup-content {
+  margin: 0;
+  width: 280px !important;
+}
+
+.custom-leaflet-popup .leaflet-popup-tip {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.custom-map-popup-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.popup-card-image-container {
+  width: 100%;
+  height: 130px;
+  overflow: hidden;
+  position: relative;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.popup-card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.popup-card-content {
+  padding: 14px;
+}
+
+.popup-card-title {
+  margin: 0 0 6px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.popup-card-description {
+  margin: 0 0 12px 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #cbd5e1;
+}
+
+.popup-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.popup-card-tag {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.15);
+  padding: 1.5px 5px;
+  border-radius: 3px;
+}
+
+.popup-card-coords {
+  font-size: 9px;
+  font-family: monospace;
+  color: #64748b;
+}
+
+/* Light Theme Adjustments for Leaflet Popups */
+.light .custom-leaflet-popup .leaflet-popup-content-wrapper {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: #0f172a;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+.light .custom-leaflet-popup .leaflet-popup-tip {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.light .popup-card-image-container {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.light .popup-card-title {
+  color: #0f172a;
+}
+
+.light .popup-card-description {
+  color: #475569;
+}
+
+.light .popup-card-footer {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}

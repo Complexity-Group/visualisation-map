@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, shallowRef } from 'vue';
+import { ref, onMounted, shallowRef, computed } from 'vue';
 import { map, divIcon, tileLayer, marker, polygon, type Map as LeafletMap, type Layer } from 'leaflet';
 
 // Types
@@ -10,6 +10,9 @@ interface LocationItem {
   zoom: number;
   iconSvg: string;
   popupText: string;
+  image?: string;
+  type: 'point' | 'zone';
+  polygonCoords?: [number, number][];
   leafletInstance?: any;
 }
 
@@ -27,7 +30,7 @@ const mapPinIcon = `
   </svg>
 `;
 
-const areaIcon = `
+const interestZoneIcon = `
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
     <polyline points="2 17 12 22 22 17"></polyline>
@@ -38,29 +41,102 @@ const areaIcon = `
 const locations = ref<LocationItem[]>([
   {
     id: 0,
-    name: 'California 0 (Long Beach)',
+    name: 'Interest Point 0',
     coords: [33.782581, -118.189319],
     zoom: 14,
     iconSvg: mapPinIcon,
-    popupText: 'California 0 - Standard Pin'
+    popupText: 'Located in the port region of Long Beach, this coordinates hub tracks regional freight and harbor shipping telemetry.',
+    image: '/images/skyline.png',
+    type: 'point'
   },
   {
     id: 1,
-    name: 'California 1 (Custom Icon)',
+    name: 'Interest Point 1',
     coords: [33.774109, -118.189319],
     zoom: 14,
     iconSvg: mapPinIcon,
-    popupText: 'California 1 - Custom SVG Pin'
+    popupText: 'A specialized monitoring checkpoint styled with custom SVG visual interest points, tracking coastal waves and marine traffic.',
+    image: '/images/coast.png',
+    type: 'point'
   },
   {
     id: 2,
-    name: 'South Bay Area Zone',
-    coords: [33.83355, -118.25283], // center of the polygon
+    name: 'South Bay Interest Zone',
+    coords: [33.83355, -118.25283],
     zoom: 15,
-    iconSvg: areaIcon,
-    popupText: 'Something has happened here'
+    iconSvg: interestZoneIcon,
+    popupText: 'A high-alert industrial and tech perimeter containing active sensors for regional geovisual tracking.',
+    image: '/images/tech_zone.png',
+    type: 'zone',
+    polygonCoords: [
+      [33.835408, -118.257158],
+      [33.835408, -118.248478],
+      [33.831701, -118.248489],
+      [33.831701, -118.257179]
+    ]
+  },
+  {
+    id: 3,
+    name: 'Golden Gate Bridge Interest Point',
+    coords: [37.8199, -122.4783],
+    zoom: 14,
+    iconSvg: mapPinIcon,
+    popupText: 'The iconic Golden Gate Bridge checkpoint, monitoring northern entry traffic into the San Francisco Bay area.',
+    type: 'point'
+  },
+  {
+    id: 4,
+    name: 'Yosemite Valley Interest Point',
+    coords: [37.7456, -119.5332],
+    zoom: 13,
+    iconSvg: mapPinIcon,
+    popupText: 'Sierra Nevada monitoring station, tracking natural environmental indicators and valley telemetry.',
+    type: 'point'
+  },
+  {
+    id: 5,
+    name: 'Death Valley (Badwater Basin) Interest Point',
+    coords: [36.2503, -116.8258],
+    zoom: 12,
+    iconSvg: mapPinIcon,
+    popupText: 'A specialized deep-desert sensory point measuring extreme temperature and heat index indices.',
+    type: 'point'
+  },
+  {
+    id: 6,
+    name: 'Silicon Valley Tech-Interest Zone',
+    coords: [37.3875, -122.0575],
+    zoom: 11,
+    iconSvg: interestZoneIcon,
+    popupText: 'A sprawling technological zone mapping campuses and regional computing telemetry.',
+    type: 'zone',
+    polygonCoords: [
+      [37.4200, -122.1000],
+      [37.4200, -122.0000],
+      [37.3500, -122.0000],
+      [37.3500, -122.1000]
+    ]
+  },
+  {
+    id: 7,
+    name: 'Lake Tahoe Basin Interest Zone',
+    coords: [39.0968, -120.0324],
+    zoom: 11,
+    iconSvg: interestZoneIcon,
+    popupText: 'Alpine fresh water reservoir zone tracking seasonal water levels and lake surface temperature data.',
+    type: 'zone',
+    polygonCoords: [
+      [39.2000, -120.1500],
+      [39.2000, -119.9500],
+      [39.0000, -119.9500],
+      [39.0000, -120.1500]
+    ]
   }
 ]);
+
+// Computed stats
+const pointCount = computed(() => locations.value.filter(loc => loc.type === 'point').length);
+const zoneCount = computed(() => locations.value.filter(loc => loc.type === 'zone').length);
 
 const lightTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const darkTiles = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -73,9 +149,7 @@ const setTileLayer = (mode: 'dark' | 'light') => {
   }
 
   const url = mode === 'dark' ? darkTiles : lightTiles;
-  const attribution = mode === 'dark'
-    ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-    : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
   currentTileLayer.value = tileLayer(url, {
     maxZoom: 19,
@@ -107,22 +181,57 @@ const selectLocation = (loc: LocationItem) => {
 onMounted(() => {
   if (!mapContainer.value) return;
 
-  // Initialize Map directly on DOM ref, avoiding ID search
+  // Initialize Map directly on DOM ref, centered on central California to cover all points
   const mapInst = map(mapContainer.value).setView([36.7783, -119.4179], 6);
   mapObject.value = mapInst;
 
   // Set tile layer
   setTileLayer(themeMode.value);
 
-  // Default Leaflet Marker
-  const marker0 = marker(locations.value[0].coords)
-    .addTo(mapInst)
-    .bindPopup(locations.value[0].popupText);
-  locations.value[0].leafletInstance = marker0;
+  // Helper to generate a rich HTML template for Leaflet Popups
+  const generatePopupContent = (title: string, text: string, imageSrc?: string, coords?: [number, number]) => {
+    return `
+      <div class="custom-map-popup-card">
+        ${imageSrc ? `
+          <div class="popup-card-image-container">
+            <img src="${imageSrc}" alt="${title}" class="popup-card-image" />
+          </div>
+        ` : ''}
+        <div class="popup-card-content">
+          <h4 class="popup-card-title">${title}</h4>
+          <p class="popup-card-description">${text}</p>
+          <div class="popup-card-footer">
+            <span class="popup-card-tag">Telemetry Node</span>
+            ${coords ? `<span class="popup-card-coords">${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  };
 
-  // Custom DivIcon Marker
+  const bindCustomPopup = (layer: any, title: string, text: string, imageSrc?: string, coords?: [number, number]) => {
+    layer.bindPopup(generatePopupContent(title, text, imageSrc, coords), {
+      className: 'custom-leaflet-popup',
+      closeButton: false,
+      offset: [0, -8],
+      maxWidth: 280
+    });
+  };
+
+  // Sync sidebar active state on popup open
+  mapInst.on('popupopen', (e: any) => {
+    const popupLayer = e.popup._source;
+    if (popupLayer) {
+      const found = locations.value.find(loc => loc.leafletInstance === popupLayer);
+      if (found) {
+        activeLocationId.value = found.id;
+      }
+    }
+  });
+
+  // Custom DivIcon Interest Point
   const customSvgIcon = divIcon({
-    className: 'custom-svg-marker',
+    className: 'custom-svg-interest-point',
     html: `
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" style="filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));">
         <path fill="#ef4444" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
@@ -133,28 +242,38 @@ onMounted(() => {
     popupAnchor: [0, -32]
   });
 
-  const marker1 = marker(locations.value[1].coords, { icon: customSvgIcon })
-    .addTo(mapInst)
-    .bindPopup(locations.value[1].popupText);
-  locations.value[1].leafletInstance = marker1;
+  // Dynamically loop and render all locations on the Leaflet map
+  locations.value.forEach((loc) => {
+    let layer: any;
 
-  // Polygon Area Zone
-  const poly = polygon([
-    [33.835408, -118.257158],
-    [33.835408, -118.248478],
-    [33.831701, -118.248489],
-    [33.831701, -118.257179],
-  ], {
-    color: '#3b82f6',
-    fillColor: '#3b82f6',
-    fillOpacity: 0.25,
-    weight: 2
-  }).addTo(mapInst).bindPopup(locations.value[2].popupText);
+    if (loc.type === 'zone' && loc.polygonCoords) {
+      // Render Zone (polygon)
+      layer = polygon(loc.polygonCoords, {
+        color: '#3b82f6',
+        fillColor: '#3b82f6',
+        fillOpacity: 0.25,
+        weight: 2
+      }).addTo(mapInst);
+    } else {
+      // Render Point (marker)
+      if (loc.id === 1) {
+        // Special custom icon for California 1
+        layer = marker(loc.coords, { icon: customSvgIcon }).addTo(mapInst);
+      } else {
+        layer = marker(loc.coords).addTo(mapInst);
+      }
+    }
 
-  locations.value[2].leafletInstance = poly;
+    // Bind custom HTML popup
+    bindCustomPopup(layer, loc.name, loc.popupText, loc.image, loc.coords);
+    loc.leafletInstance = layer;
+  });
 
-  // Open initial popup on mount
-  poly.openPopup();
+  // Open initial popup on mount (Yosemite Valley is a nice central choice)
+  if (locations.value[4].leafletInstance) {
+    locations.value[4].leafletInstance.openPopup();
+    activeLocationId.value = 4;
+  }
 });
 </script>
 
@@ -170,9 +289,8 @@ onMounted(() => {
             <line x1="9" y1="3" x2="9" y2="18"></line>
             <line x1="15" y1="6" x2="15" y2="21"></line>
           </svg>
-          <h1>GeoVisual</h1>
+          <h1>California map visualisation</h1>
         </div>
-        <p class="subtitle">Interactive Mapping Console</p>
       </div>
 
       <!-- Theme Toggle Button -->
@@ -185,7 +303,7 @@ onMounted(() => {
 
       <!-- Interactive Location List -->
       <div class="sidebar-section">
-        <h3>Locations & Zones</h3>
+        <h3>Locations & Interest Zones</h3>
         <div class="location-list">
           <button v-for="loc in locations" :key="loc.id" class="location-card"
             :class="{ active: activeLocationId === loc.id }" @click="selectLocation(loc)">
@@ -205,16 +323,16 @@ onMounted(() => {
         <h3>Region Analytics</h3>
         <div class="stat-grid">
           <div class="stat-box">
-            <span class="stat-val">3</span>
+            <span class="stat-val">{{ locations.length }}</span>
             <span class="stat-label">Features</span>
           </div>
           <div class="stat-box">
-            <span class="stat-val">2</span>
-            <span class="stat-label">Markers</span>
+            <span class="stat-val">{{ pointCount }}</span>
+            <span class="stat-label">Interest Points</span>
           </div>
           <div class="stat-box">
-            <span class="stat-val">1</span>
-            <span class="stat-label">Area Zone</span>
+            <span class="stat-val">{{ zoneCount }}</span>
+            <span class="stat-label">Interest Zones</span>
           </div>
         </div>
       </div>
@@ -227,330 +345,6 @@ onMounted(() => {
   </div>
 </template>
 
-<style scoped>
-.dashboard {
-  display: flex;
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-  font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
-  transition: background-color 0.3s ease;
-}
-
-.dashboard.dark {
-  background-color: #0b0f19;
-  color: #f8fafc;
-}
-
-.dashboard.light {
-  background-color: #f1f5f9;
-  color: #0f172a;
-}
-
-/* Sidebar Styling */
-.sidebar {
-  width: 360px;
-  display: flex;
-  flex-direction: column;
-  padding: 24px;
-  z-index: 1000;
-  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.15);
-  overflow-y: auto;
-  flex-shrink: 0;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
-}
-
-.dark .sidebar {
-  background: rgba(11, 15, 25, 0.85);
-  backdrop-filter: blur(20px) saturate(140%);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.light .sidebar {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(20px) saturate(140%);
-  border-right: 1px solid rgba(0, 0, 0, 0.08);
-}
-
-.sidebar-header {
-  margin-bottom: 24px;
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.logo-icon {
-  color: #3b82f6;
-  filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.4));
-}
-
-.logo h1 {
-  font-size: 22px;
-  font-weight: 700;
-  margin: 0;
-  letter-spacing: -0.5px;
-}
-
-.dark .logo h1 {
-  background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.light .logo h1 {
-  color: #0f172a;
-}
-
-.subtitle {
-  font-size: 13px;
-  margin: 4px 0 0 0;
-}
-
-.dark .subtitle {
-  color: #64748b;
-}
-
-.light .subtitle {
-  color: #475569;
-}
-
-.sidebar-section {
-  margin-bottom: 24px;
-}
-
-.sidebar-section h3 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  margin-bottom: 12px;
-  font-weight: 600;
-}
-
-.dark .sidebar-section h3 {
-  color: #475569;
-}
-
-.light .sidebar-section h3 {
-  color: #94a3b8;
-}
-
-/* Theme Button */
-.theme-btn {
-  width: 100%;
-  padding: 10px 14px;
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 550;
-  cursor: pointer;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.dark .theme-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #f8fafc;
-}
-
-.dark .theme-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-.light .theme-btn {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  color: #0f172a;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.light .theme-btn:hover {
-  background: #f8fafc;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.08);
-}
-
-/* Location Cards */
-.location-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.location-card {
-  border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 12px 14px;
-  text-align: left;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.dark .location-card {
-  background: rgba(30, 41, 59, 0.35);
-  border-color: rgba(255, 255, 255, 0.03);
-  color: #cbd5e1;
-}
-
-.dark .location-card:hover {
-  background: rgba(30, 41, 59, 0.7);
-  border-color: rgba(59, 130, 246, 0.3);
-  transform: translateY(-1px);
-}
-
-.dark .location-card.active {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: #3b82f6;
-  color: #ffffff;
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.1);
-}
-
-.light .location-card {
-  background: #ffffff;
-  border-color: rgba(0, 0, 0, 0.04);
-  color: #334155;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-}
-
-.light .location-card:hover {
-  background: #f8fafc;
-  border-color: rgba(59, 130, 246, 0.3);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-}
-
-.light .location-card.active {
-  background: rgba(59, 130, 246, 0.05);
-  border-color: #3b82f6;
-  color: #1e3a8a;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.08);
-}
-
-.location-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-}
-
-.card-details {
-  flex-grow: 1;
-}
-
-.icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  transition: all 0.2s ease;
-}
-
-.dark .icon {
-  background: rgba(59, 130, 246, 0.12);
-  color: #60a5fa;
-}
-
-.light .icon {
-  background: rgba(59, 130, 246, 0.08);
-  color: #2563eb;
-}
-
-.location-card:hover .icon {
-  background: #3b82f6;
-  color: #ffffff;
-}
-
-.loc-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 2px 0;
-}
-
-.loc-coords {
-  font-size: 11px;
-  font-family: monospace;
-  margin: 0;
-}
-
-.dark .loc-coords {
-  color: #64748b;
-}
-
-.light .loc-coords {
-  color: #94a3b8;
-}
-
-.location-card.active .loc-coords {
-  color: #3b82f6;
-}
-
-/* Stats Styling */
-.quick-stats .stat-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.stat-box {
-  border-radius: 10px;
-  padding: 10px 6px;
-  text-align: center;
-  transition: background-color 0.3s ease;
-}
-
-.dark .stat-box {
-  background: rgba(30, 41, 59, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.03);
-}
-
-.light .stat-box {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-}
-
-.stat-val {
-  display: block;
-  font-size: 18px;
-  font-weight: 700;
-  color: #3b82f6;
-}
-
-.stat-label {
-  display: block;
-  font-size: 9px;
-  text-transform: uppercase;
-  margin-top: 4px;
-  font-weight: 550;
-}
-
-.dark .stat-label {
-  color: #475569;
-}
-
-.light .stat-label {
-  color: #94a3b8;
-}
-
-/* Map Container */
-.map-view {
-  flex-grow: 1;
-  height: 100%;
-  position: relative;
-}
-
-.map-element {
-  width: 100%;
-  height: 100%;
-}
+<style>
+@import "./App.css";
 </style>
