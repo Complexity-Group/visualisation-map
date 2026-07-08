@@ -181,8 +181,19 @@ const selectLocation = (loc: LocationItem) => {
 onMounted(() => {
   if (!mapContainer.value) return;
 
-  // Initialize Map directly on DOM ref, centered on central California to cover all points
-  const mapInst = map(mapContainer.value).setView([36.7783, -119.4179], 6);
+  // Define California region bounds (covering all points and zones with padding)
+  const californiaBounds: [[number, number], [number, number]] = [
+    [20.92, -128.43], // Southwest corner
+    [46.62, -107.18]  // Northeast corner
+  ];
+
+  // Initialize Map with bounds and zoom limits
+  const mapInst = map(mapContainer.value, {
+    maxBounds: californiaBounds,
+    maxBoundsViscosity: 1.0, // Make bounds rigid (cannot pan past boundary)
+    minZoom: 5.5,            // Prevent zooming out past California view
+    maxZoom: 18
+  }).setView([36.7783, -119.4179], 6);
   mapObject.value = mapInst;
 
   // Set tile layer
