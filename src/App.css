@@ -439,3 +439,45 @@
 .light .popup-card-footer {
   border-top-color: rgba(0, 0, 0, 0.06);
 }
+
+/* Floating Pill Tab Navigation Styles */
+.floating-tabs-nav {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 4px;
+  border-radius: 9999px;
+  z-index: 2000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  gap: 4px;
+}
+
+.tab-pill-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 9999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tab-pill-btn:hover {
+  color: #f8fafc;
+}
+
+.tab-pill-btn.active {
+  background: #3b82f6;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+}

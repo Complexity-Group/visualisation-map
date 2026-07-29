@@ -1,0 +1,523 @@
+<script setup lang="ts">
+import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vue';
+import { map, divIcon, tileLayer, marker, polyline, latLngBounds, type Map as LeafletMap, type Layer } from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import * as XLSX from 'xlsx';
+
+// Types
+class SheetColumnData {
+  year: number | undefined;
+  countries: string[] | undefined;
+}
+
+const geoCoordinates: Record<string, [number, number]> = {
+  'Spain': [40.4637, -3.7492],
+  'Mexico': [23.6345, -102.5528],
+  'Chile': [-35.6751, -71.5430],
+  'China, Canton': [23.1291, 113.2644],
+  'France': [46.2276, 2.2137],
+  'Hawaii': [19.8968, -155.5828],
+  'Germany': [51.1657, 10.4515],
+  'India, Calcutta': [22.5726, 88.3639],
+  'Lima, Peru': [-12.0464, -77.0428],
+  'United States, Massachussetts': [42.4072, -71.3824],
+  'Ireland': [53.4129, -8.2439],
+  'Mexico, Mazatlán': [23.2494, -106.4111],
+  'Italy': [41.8719, 12.5674],
+  'Philippines, Manila': [14.5995, 120.9842],
+  'Russia': [61.5240, 105.3188],
+  'United Kingdom': [55.3781, -3.4360],
+  'United States, Colorado': [39.5501, -105.7821],
+  'United States, New York': [40.7128, -74.0060],
+  'United States, Illinois': [40.6331, -89.3985],
+  'United States, Pennsylvania': [41.2033, -77.1945],
+  'United States, Oregon': [43.8041, -120.5542],
+  'United States, Nevada': [38.8026, -116.4194],
+  'United States, Minnesota': [46.7296, -94.6859],
+  'United States, Utah': [39.3210, -111.0937]
+};
+
+const californiaCoords: [number, number] = [37.7749, -122.4194]; // San Francisco center
+
+const mapContainer = ref<HTMLDivElement | null>(null);
+const mapObject = shallowRef<LeafletMap | null>(null);
+const currentTileLayer = shallowRef<Layer | null>(null);
+
+const themeMode = ref<'dark' | 'light'>('dark');
+
+const toggleTheme = () => {
+  themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark';
+  setTileLayer(themeMode.value);
+};
+
+const parsedColumns = ref<SheetColumnData[]>([]);
+const availableYears = ref<number[]>([]);
+const selectedYearIndex = ref(0);
+const isLoading = ref(true);
+const isPlaying = ref(false);
+let playInterval: ReturnType<typeof setInterval> | null = null;
+
+// Use shallowRef to prevent Vue from proxying Leaflet Layer instances
+const mapLayers = shallowRef<Layer[]>([]);
+
+// XLSX Parsing function (loads from the local served public path)
+async function parseSheetColumns(assetPath: string = 'https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/data.xlsx'): Promise<SheetColumnData[]> {
+  const response = await fetch(assetPath);
+  if (!response.ok) {
+    throw new Error(`HTTP error fetching ${assetPath}: ${response.status} ${response.statusText}`);
+  }
+
+  const arrayBuffer: ArrayBuffer = await response.arrayBuffer();
+
+  const workbook: XLSX.WorkBook = XLSX.read(arrayBuffer, {
+    type: 'array',
+    cellDates: true,
+  });
+
+  const mainSheet: XLSX.WorkSheet | undefined = workbook.Sheets['Sheet1'];
+
+  if (!mainSheet || !mainSheet['!ref']) {
+    return [];
+  }
+
+  const range = XLSX.utils.decode_range(mainSheet['!ref']);
+  const result: SheetColumnData[] = [];
+
+  for (let C = range.s.c; C <= range.e.c; ++C) {
+    const col = new SheetColumnData();
+
+    const headerAddress = XLSX.utils.encode_cell({ r: range.s.r, c: C });
+    const headerCell = mainSheet[headerAddress];
+
+    if (headerCell !== undefined && headerCell.v !== undefined) {
+      const yearValue = Number(headerCell.v);
+      col.year = !Number.isNaN(yearValue) ? yearValue : undefined;
+    }
+
+    const countryList: string[] = [];
+    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+      const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+      const cell = mainSheet[cellAddress];
+
+      if (cell !== undefined && cell.v !== undefined && cell.v !== null) {
+        const value = String(cell.v).trim();
+        if (value.length > 0) {
+          countryList.push(value);
+        }
+      }
+    }
+
+    col.countries = countryList.length > 0 ? countryList : undefined;
+    if (col.year) {
+      result.push(col);
+    }
+  }
+
+  return result;
+}
+
+// Compute active year and partners based on timeline slider index
+const activeYear = computed(() => availableYears.value[selectedYearIndex.value] || null);
+const activePartners = computed(() => {
+  if (!activeYear.value) return [];
+  const found = parsedColumns.value.find(c => c.year === activeYear.value);
+  return found?.countries || [];
+});
+
+const domesticCount = computed(() => {
+  return activePartners.value.filter(p => p.toLowerCase().includes('united states')).length;
+});
+
+const internationalCount = computed(() => {
+  return activePartners.value.length - domesticCount.value;
+});
+
+const lightTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const darkTiles = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
+const setTileLayer = (mode: 'dark' | 'light') => {
+  if (!mapObject.value) return;
+
+  if (currentTileLayer.value) {
+    mapObject.value.removeLayer(currentTileLayer.value);
+  }
+
+  const url = mode === 'dark' ? darkTiles : lightTiles;
+  const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+  currentTileLayer.value = tileLayer(url, {
+    maxZoom: 18,
+    attribution,
+  }).addTo(mapObject.value);
+};
+
+// React to global theme change
+watch(themeMode, (mode) => {
+  setTileLayer(mode);
+});
+
+// Play/Pause timeline animation
+const togglePlay = () => {
+  isPlaying.value = !isPlaying.value;
+  if (isPlaying.value) {
+    playInterval = setInterval(() => {
+      if (selectedYearIndex.value < availableYears.value.length - 1) {
+        selectedYearIndex.value++;
+      } else {
+        selectedYearIndex.value = 0; // loop back
+      }
+    }, 1800);
+  } else {
+    if (playInterval) {
+      clearInterval(playInterval);
+      playInterval = null;
+    }
+  }
+};
+
+const stopPlay = () => {
+  isPlaying.value = false;
+  if (playInterval) {
+    clearInterval(playInterval);
+    playInterval = null;
+  }
+};
+
+const focusOnLocation = (partnerName: string) => {
+  const coords = geoCoordinates[partnerName];
+  if (coords && mapObject.value) {
+    mapObject.value.flyTo(coords, 4, {
+      duration: 1.2
+    });
+  }
+};
+
+// Custom SVG map icons
+const caliIcon = divIcon({
+  className: 'cali-anchor-icon',
+  html: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
+      <circle cx="12" cy="12" r="8" fill="#3b82f6" stroke="#ffffff" stroke-width="3" style="filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));" />
+      <circle cx="12" cy="12" r="3" fill="#ffffff" />
+    </svg>
+  `,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18]
+});
+
+const partnerIcon = divIcon({
+  className: 'partner-trade-icon',
+  html: `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+      <circle cx="12" cy="12" r="6" fill="#f59e0b" stroke="#ffffff" stroke-width="2" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));" />
+    </svg>
+  `,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12]
+});
+
+const clearLayers = () => {
+  if (mapObject.value) {
+    mapLayers.value.forEach(layer => {
+      mapObject.value!.removeLayer(layer);
+    });
+    mapLayers.value = [];
+  }
+};
+
+// Reactive map updates based on selected year/partners
+const updateMapLayers = () => {
+  if (!mapObject.value || isLoading.value) return;
+  clearLayers();
+
+  const newLayers: Layer[] = [];
+  const boundsList: [number, number][] = [californiaCoords];
+
+  // Draw California anchor marker
+  const caliMarker = marker(californiaCoords, { icon: caliIcon }).addTo(mapObject.value);
+  caliMarker.bindPopup(`
+    <div class="custom-map-popup-card">
+      <div class="popup-card-content">
+        <h4 class="popup-card-title">California (San Francisco Port)</h4>
+        <p class="popup-card-description">Global trade entry port and shipping terminus.</p>
+      </div>
+    </div>
+  `, {
+    closeButton: false,
+    className: 'custom-leaflet-popup'
+  });
+  newLayers.push(caliMarker);
+
+  // Draw trade connections
+  activePartners.value.forEach(partner => {
+    const coords = geoCoordinates[partner];
+    if (coords) {
+      boundsList.push(coords);
+
+      // Route polyline (dashed arc-like appearance)
+      const route = polyline([californiaCoords, coords], {
+        color: '#f59e0b',
+        weight: 2,
+        opacity: 0.8,
+        dashArray: '5, 8',
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(mapObject.value!);
+      newLayers.push(route);
+
+      // Partner destination marker
+      const partnerMarker = marker(coords, { icon: partnerIcon }).addTo(mapObject.value!);
+      partnerMarker.bindPopup(`
+        <div class="custom-map-popup-card">
+          <div class="popup-card-content">
+            <h4 class="popup-card-title">${partner}</h4>
+            <p class="popup-card-description">Registered trade partner with California in the year ${activeYear.value}.</p>
+            <div class="popup-card-footer">
+              <span class="popup-card-tag">Trade Link</span>
+              <span class="popup-card-coords">${coords[0].toFixed(2)}°, ${coords[1].toFixed(2)}°</span>
+            </div>
+          </div>
+        </div>
+      `, {
+        closeButton: false,
+        className: 'custom-leaflet-popup',
+        offset: [0, -4]
+      });
+      newLayers.push(partnerMarker);
+    }
+  });
+
+  mapLayers.value = newLayers;
+
+  // Fit bounds to show all active trade lines nicely
+  if (boundsList.length > 1) {
+    const bounds = latLngBounds(boundsList);
+    mapObject.value.flyToBounds(bounds, {
+      padding: [40, 40],
+      maxZoom: 4.5,
+      animate: true,
+      duration: 1.0
+    });
+  }
+};
+
+watch(activePartners, () => {
+  updateMapLayers();
+});
+
+onMounted(() => {
+  if (!mapContainer.value) return;
+
+  // Initialize Map focused on the world for trade routes immediately on mount
+  const mapInst = map(mapContainer.value, {
+    minZoom: 1.8,
+    maxZoom: 10,
+    worldCopyJump: false
+  }).setView([25.0, -80.0], 2);
+  mapObject.value = mapInst;
+
+  setTileLayer(themeMode.value);
+
+  // Load spreadsheet database asynchronously
+  parseSheetColumns()
+    .then((data) => {
+      isLoading.value = false;
+      parsedColumns.value = data;
+      availableYears.value = data.map(d => d.year!).sort((a, b) => a - b);
+      selectedYearIndex.value = 0;
+    })
+    .catch((err) => {
+      console.error('Failed to parse trades data:', err);
+      isLoading.value = false;
+    });
+});
+
+onBeforeUnmount(() => {
+  stopPlay();
+  if (mapObject.value) {
+    mapObject.value.remove();
+    mapObject.value = null;
+  }
+});
+</script>
+
+<template>
+  <div class="dashboard" :class="themeMode">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header-section">
+        <h2>California Trades</h2>
+        <p class="subtitle">Historical maritime trading connections (1822 - 1900)</p>
+      </div>
+
+      <!-- Theme Toggle Button -->
+      <div class="sidebar-section">
+        <button class="theme-btn" @click="toggleTheme">
+          <span v-if="themeMode === 'dark'">☀️ Switch to Light Mode</span>
+          <span v-else>🌙 Switch to Dark Mode</span>
+        </button>
+      </div>
+
+      <!-- Loading skeleton -->
+      <div v-if="isLoading" class="sidebar-section loading-panel">
+        <p>Loading spreadsheet database...</p>
+      </div>
+
+      <template v-else>
+        <!-- Timeline Controls -->
+        <div class="sidebar-section timeline-panel">
+          <div class="timeline-header">
+            <h3>Year: <span class="highlight-year">{{ activeYear }}</span></h3>
+            <button class="play-btn" @click="togglePlay" :class="{ playing: isPlaying }">
+              <span v-if="isPlaying">⏸ Pause Autoplay</span>
+              <span v-else>▶ Play Timeline</span>
+            </button>
+          </div>
+          <div class="slider-container">
+            <input type="range" :min="0" :max="availableYears.length - 1" v-model.number="selectedYearIndex"
+              class="timeline-slider" @input="stopPlay" />
+            <div class="slider-labels">
+              <span>1822</span>
+              <span>1860</span>
+              <span>1900</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Interactive Trade Partners List -->
+        <div class="sidebar-section">
+          <h3>Trading Partners</h3>
+          <div class="location-list">
+            <button v-for="partner in activePartners" :key="partner" class="location-card partner-card"
+              @click="focusOnLocation(partner)">
+              <div class="location-info">
+                <span class="icon">⚓</span>
+                <div class="card-details">
+                  <h4 class="loc-title">{{ partner }}</h4>
+                  <p class="loc-coords" v-if="geoCoordinates[partner]">
+                    {{ geoCoordinates[partner][0].toFixed(2) }}°, {{ geoCoordinates[partner][1].toFixed(2) }}°
+                  </p>
+                </div>
+              </div>
+            </button>
+            <div v-if="activePartners.length === 0" class="no-data-msg">
+              No registered trade partners found for this year.
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats Box -->
+        <div class="sidebar-section quick-stats">
+          <h3>Connections Analytics</h3>
+          <div class="stat-grid">
+            <div class="stat-box">
+              <span class="stat-val">{{ activePartners.length }}</span>
+              <span class="stat-label">Total Partners</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val">{{ domesticCount }}</span>
+              <span class="stat-label">Domestic (US)</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val">{{ internationalCount }}</span>
+              <span class="stat-label">International</span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </aside>
+
+    <!-- Map View -->
+    <main class="map-view">
+      <div ref="mapContainer" class="map-element"></div>
+    </main>
+  </div>
+</template>
+
+<style>
+/* Leaflet core layout resets */
+.map-element {
+  width: 100%;
+  height: 100%;
+}
+
+.leaflet-container img {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* Remove Leaflet default L.divIcon border & background */
+.cali-anchor-icon,
+.partner-trade-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Specific timeline slider styling */
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.highlight-year {
+  font-size: 22px;
+  font-weight: 800;
+  color: #f59e0b;
+}
+
+.play-btn {
+  background: #f59e0b;
+  color: #0f172a;
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.play-btn.playing {
+  background: #ef4444;
+  color: white;
+}
+
+.slider-container {
+  padding: 8px 4px;
+}
+
+.timeline-slider {
+  width: 100%;
+  accent-color: #f59e0b;
+  cursor: pointer;
+}
+
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.partner-card .icon {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.no-data-msg {
+  text-align: center;
+  font-size: 12px;
+  color: #64748b;
+  padding: 24px 0;
+}
+</style>
