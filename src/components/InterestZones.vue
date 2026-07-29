@@ -107,7 +107,6 @@ const locations = ref<LocationItem[]>([
     zoom: 14,
     iconSvg: mapPinIcon,
     popupText: 'Located in the port region of Long Beach, this coordinates hub tracks regional freight and harbor shipping telemetry.',
-    image: '/images/skyline.png',
     type: 'point'
   },
 ]);
