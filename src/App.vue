@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, shallowRef, computed } from 'vue';
 import { map, divIcon, tileLayer, marker, polygon, type Map as LeafletMap, type Layer } from 'leaflet';
+import * as XLSX from 'xlsx';
 
 // Types
 interface LocationItem {
@@ -16,6 +17,74 @@ interface LocationItem {
   leafletInstance?: any;
 }
 
+class SheetColumnData {
+  year: number | undefined;
+  countries: string[] | undefined;
+}
+
+async function parseSheetColumns(assetPath: string = '/data/data.xlsx'): Promise<SheetColumnData[]> {
+  // 1. Fetch binary payload
+  const response = await fetch(assetPath);
+  if (!response.ok) {
+    throw new Error(`HTTP error fetching ${assetPath}: ${response.status} ${response.statusText}`);
+  }
+
+  const arrayBuffer: ArrayBuffer = await response.arrayBuffer();
+
+  // 2. Decode workbook
+  const workbook: XLSX.WorkBook = XLSX.read(arrayBuffer, {
+    type: 'array',
+    cellDates: true,
+  });
+
+  const mainSheet: XLSX.WorkSheet | undefined = workbook.Sheets['Sheet1'];
+
+  // 3. Guard clause resolving TS2345 string | undefined mismatch
+  if (!mainSheet || !mainSheet['!ref']) {
+    return [];
+  }
+
+  // 4. Decode cell coordinate bounds
+  const range = XLSX.utils.decode_range(mainSheet['!ref']);
+  const parsedColumns: SheetColumnData[] = [];
+
+  // Outer Loop: Iterate Column Indices (s.c -> e.c)
+  for (let C = range.s.c; C <= range.e.c; ++C) {
+    const col = new SheetColumnData();
+
+    // Decode top header cell (Row s.r) -> 'year'
+    const headerAddress = XLSX.utils.encode_cell({ r: range.s.r, c: C });
+    const headerCell = mainSheet[headerAddress];
+
+    if (headerCell !== undefined && headerCell.v !== undefined) {
+      const yearValue = Number(headerCell.v);
+      col.year = !Number.isNaN(yearValue) ? yearValue : undefined;
+    }
+
+    // Inner Loop: Iterate Row Indices below header (s.r + 1 -> e.r) -> 'countries'
+    const countryList: string[] = [];
+    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+      const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+      const cell = mainSheet[cellAddress];
+
+      if (cell !== undefined && cell.v !== undefined && cell.v !== null) {
+        const value = String(cell.v).trim();
+        if (value.length > 0) {
+          countryList.push(value);
+        }
+      }
+    }
+
+    col.countries = countryList.length > 0 ? countryList : undefined;
+    parsedColumns.push(col);
+  }
+
+  return parsedColumns;
+}
+
+let parsed_columns = parseSheetColumns();
+console.log(parsed_columns);
+
 const mapContainer = ref<HTMLDivElement | null>(null);
 const mapObject = shallowRef<LeafletMap | null>(null);
 const currentTileLayer = shallowRef<Layer | null>(null);
@@ -30,14 +99,6 @@ const mapPinIcon = `
   </svg>
 `;
 
-const interestZoneIcon = `
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-    <polyline points="2 17 12 22 22 17"></polyline>
-    <polyline points="2 12 12 17 22 12"></polyline>
-  </svg>
-`;
-
 const locations = ref<LocationItem[]>([
   {
     id: 0,
@@ -49,89 +110,6 @@ const locations = ref<LocationItem[]>([
     image: '/images/skyline.png',
     type: 'point'
   },
-  {
-    id: 1,
-    name: 'Interest Point 1',
-    coords: [33.774109, -118.189319],
-    zoom: 14,
-    iconSvg: mapPinIcon,
-    popupText: 'A specialized monitoring checkpoint styled with custom SVG visual interest points, tracking coastal waves and marine traffic.',
-    image: '/images/coast.png',
-    type: 'point'
-  },
-  {
-    id: 2,
-    name: 'South Bay Interest Zone',
-    coords: [33.83355, -118.25283],
-    zoom: 15,
-    iconSvg: interestZoneIcon,
-    popupText: 'A high-alert industrial and tech perimeter containing active sensors for regional geovisual tracking.',
-    image: '/images/tech_zone.png',
-    type: 'zone',
-    polygonCoords: [
-      [33.835408, -118.257158],
-      [33.835408, -118.248478],
-      [33.831701, -118.248489],
-      [33.831701, -118.257179]
-    ]
-  },
-  {
-    id: 3,
-    name: 'Golden Gate Bridge Interest Point',
-    coords: [37.8199, -122.4783],
-    zoom: 14,
-    iconSvg: mapPinIcon,
-    popupText: 'The iconic Golden Gate Bridge checkpoint, monitoring northern entry traffic into the San Francisco Bay area.',
-    type: 'point'
-  },
-  {
-    id: 4,
-    name: 'Yosemite Valley Interest Point',
-    coords: [37.7456, -119.5332],
-    zoom: 13,
-    iconSvg: mapPinIcon,
-    popupText: 'Sierra Nevada monitoring station, tracking natural environmental indicators and valley telemetry.',
-    type: 'point'
-  },
-  {
-    id: 5,
-    name: 'Death Valley (Badwater Basin) Interest Point',
-    coords: [36.2503, -116.8258],
-    zoom: 12,
-    iconSvg: mapPinIcon,
-    popupText: 'A specialized deep-desert sensory point measuring extreme temperature and heat index indices.',
-    type: 'point'
-  },
-  {
-    id: 6,
-    name: 'Silicon Valley Tech-Interest Zone',
-    coords: [37.3875, -122.0575],
-    zoom: 11,
-    iconSvg: interestZoneIcon,
-    popupText: 'A sprawling technological zone mapping campuses and regional computing telemetry.',
-    type: 'zone',
-    polygonCoords: [
-      [37.4200, -122.1000],
-      [37.4200, -122.0000],
-      [37.3500, -122.0000],
-      [37.3500, -122.1000]
-    ]
-  },
-  {
-    id: 7,
-    name: 'Lake Tahoe Basin Interest Zone',
-    coords: [39.0968, -120.0324],
-    zoom: 11,
-    iconSvg: interestZoneIcon,
-    popupText: 'Alpine fresh water reservoir zone tracking seasonal water levels and lake surface temperature data.',
-    type: 'zone',
-    polygonCoords: [
-      [39.2000, -120.1500],
-      [39.2000, -119.9500],
-      [39.0000, -119.9500],
-      [39.0000, -120.1500]
-    ]
-  }
 ]);
 
 // Computed stats

@@ -7,7 +7,7 @@
 node_modules
 dist/
 
-public
+# public
 
 # Profile
 .rspack-profile-*/

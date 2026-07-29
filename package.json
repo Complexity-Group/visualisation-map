@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "leaflet": "^1.9.4",
-    "vue": "^3.5.38"
+    "vue": "^3.5.38",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@rsbuild/core": "^2.0.14",
