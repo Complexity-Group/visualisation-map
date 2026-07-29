@@ -22,7 +22,7 @@ class SheetColumnData {
   countries: string[] | undefined;
 }
 
-async function parseSheetColumns(assetPath: string = '/data/data.xlsx'): Promise<SheetColumnData[]> {
+async function parseSheetColumns(assetPath: string = 'https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/data.xlsx'): Promise<SheetColumnData[]> {
   // 1. Fetch binary payload
   const response = await fetch(assetPath);
   if (!response.ok) {
