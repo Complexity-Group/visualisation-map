@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vue';
-import { map, divIcon, tileLayer, marker, polyline, latLngBounds, type Map as LeafletMap, type Layer } from 'leaflet';
+import { map, tileLayer, latLngBounds, geoJSON, type Map as LeafletMap, type Layer } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
 
@@ -38,6 +38,35 @@ const geoCoordinates: Record<string, [number, number]> = {
 };
 
 const californiaCoords: [number, number] = [37.7749, -122.4194]; // San Francisco center
+
+const worldGeoJson = ref<any>(null);
+
+const tradePartnerToCountryName: Record<string, string> = {
+  'Spain': 'Spain',
+  'Mexico': 'Mexico',
+  'Chile': 'Chile',
+  'China, Canton': 'China',
+  'France': 'France',
+  'Hawaii': 'United States of America',
+  'Germany': 'Germany',
+  'India, Calcutta': 'India',
+  'Lima, Peru': 'Peru',
+  'United States, Massachussetts': 'United States of America',
+  'Ireland': 'Ireland',
+  'Mexico, Mazatlán': 'Mexico',
+  'Italy': 'Italy',
+  'Philippines, Manila': 'Philippines',
+  'Russia': 'Russia',
+  'United Kingdom': 'United Kingdom',
+  'United States, Colorado': 'United States of America',
+  'United States, New York': 'United States of America',
+  'United States, Illinois': 'United States of America',
+  'United States, Pennsylvania': 'United States of America',
+  'United States, Oregon': 'United States of America',
+  'United States, Nevada': 'United States of America',
+  'United States, Minnesota': 'United States of America',
+  'United States, Utah': 'United States of America'
+};
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const mapObject = shallowRef<LeafletMap | null>(null);
@@ -192,30 +221,6 @@ const focusOnLocation = (partnerName: string) => {
   }
 };
 
-// Custom SVG map icons
-const caliIcon = divIcon({
-  className: 'cali-anchor-icon',
-  html: `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
-      <circle cx="12" cy="12" r="8" fill="#3b82f6" stroke="#ffffff" stroke-width="3" style="filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));" />
-      <circle cx="12" cy="12" r="3" fill="#ffffff" />
-    </svg>
-  `,
-  iconSize: [36, 36],
-  iconAnchor: [18, 18]
-});
-
-const partnerIcon = divIcon({
-  className: 'partner-trade-icon',
-  html: `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-      <circle cx="12" cy="12" r="6" fill="#f59e0b" stroke="#ffffff" stroke-width="2" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));" />
-    </svg>
-  `,
-  iconSize: [24, 24],
-  iconAnchor: [12, 12]
-});
-
 const clearLayers = () => {
   if (mapObject.value) {
     mapLayers.value.forEach(layer => {
@@ -227,63 +232,77 @@ const clearLayers = () => {
 
 // Reactive map updates based on selected year/partners
 const updateMapLayers = () => {
-  if (!mapObject.value || isLoading.value) return;
+  if (!mapObject.value || isLoading.value || !worldGeoJson.value) return;
   clearLayers();
 
   const newLayers: Layer[] = [];
   const boundsList: [number, number][] = [californiaCoords];
 
-  // Draw California anchor marker
-  const caliMarker = marker(californiaCoords, { icon: caliIcon }).addTo(mapObject.value);
-  caliMarker.bindPopup(`
-    <div class="custom-map-popup-card">
-      <div class="popup-card-content">
-        <h4 class="popup-card-title">California (San Francisco Port)</h4>
-        <p class="popup-card-description">Global trade entry port and shipping terminus.</p>
-      </div>
-    </div>
-  `, {
-    closeButton: false,
-    className: 'custom-leaflet-popup'
-  });
-  newLayers.push(caliMarker);
-
-  // Draw trade connections
+  // Draw trade connections and highlight country shapes
   activePartners.value.forEach(partner => {
     const coords = geoCoordinates[partner];
     if (coords) {
       boundsList.push(coords);
 
-      // Route polyline (dashed arc-like appearance)
-      const route = polyline([californiaCoords, coords], {
-        color: '#f59e0b',
-        weight: 2,
-        opacity: 0.8,
-        dashArray: '5, 8',
-        lineCap: 'round',
-        lineJoin: 'round'
-      }).addTo(mapObject.value!);
-      newLayers.push(route);
+      // Find and highlight country shape on the map instead of placing a marker
+      const countryName = tradePartnerToCountryName[partner];
+      if (countryName && worldGeoJson.value) {
+        const countryFeature = worldGeoJson.value.features.find((f: any) =>
+          f.properties.NAME === countryName ||
+          f.properties.NAME_LONG === countryName ||
+          f.properties.ADMIN === countryName
+        );
 
-      // Partner destination marker
-      const partnerMarker = marker(coords, { icon: partnerIcon }).addTo(mapObject.value!);
-      partnerMarker.bindPopup(`
-        <div class="custom-map-popup-card">
-          <div class="popup-card-content">
-            <h4 class="popup-card-title">${partner}</h4>
-            <p class="popup-card-description">Registered trade partner with California in the year ${activeYear.value}.</p>
-            <div class="popup-card-footer">
-              <span class="popup-card-tag">Trade Link</span>
-              <span class="popup-card-coords">${coords[0].toFixed(2)}°, ${coords[1].toFixed(2)}°</span>
+        if (countryFeature) {
+          const geoLayer = geoJSON(countryFeature, {
+            style: {
+              color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
+              weight: 1.5,
+              fillColor: themeMode.value === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)',
+              fillOpacity: 1.0,
+              lineJoin: 'round'
+            }
+          }).addTo(mapObject.value!);
+
+          // Interactive hover glow styling
+          geoLayer.on({
+            mouseover: (e) => {
+              const layer = e.target;
+              layer.setStyle({
+                color: themeMode.value === 'dark' ? '#fbbf24' : '#b45309',
+                weight: 2.5
+              });
+            },
+            mouseout: (e) => {
+              const layer = e.target;
+              layer.setStyle({
+                color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
+                weight: 1.5
+              });
+            }
+          });
+
+          // Bind details popup directly to country boundary
+          geoLayer.bindPopup(`
+            <div class="custom-map-popup-card">
+              <div class="popup-card-content">
+                <h4 class="popup-card-title">${partner}</h4>
+                <p class="popup-card-description">Historical trade connection with California in the year ${activeYear.value}.</p>
+                <div class="popup-card-footer">
+                  <span class="popup-card-tag">Trade Country</span>
+                  <span class="popup-card-coords">Region Highlighted</span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      `, {
-        closeButton: false,
-        className: 'custom-leaflet-popup',
-        offset: [0, -4]
-      });
-      newLayers.push(partnerMarker);
+          `, {
+            closeButton: false,
+            className: 'custom-leaflet-popup',
+            offset: [0, -10]
+          });
+
+          newLayers.push(geoLayer);
+        }
+      }
     }
   });
 
@@ -321,6 +340,7 @@ onMounted(() => {
   // Load spreadsheet database asynchronously
   parseSheetColumns()
     .then((data) => {
+      // Set isLoading to false BEFORE setting data, so watcher is not blocked
       isLoading.value = false;
       parsedColumns.value = data;
       availableYears.value = data.map(d => d.year!).sort((a, b) => a - b);
@@ -330,6 +350,15 @@ onMounted(() => {
       console.error('Failed to parse trades data:', err);
       isLoading.value = false;
     });
+
+  // Load world countries GeoJSON database
+  fetch('https://raw.githubusercontent.com/Complexity-Group/visualisation-map/refs/heads/main/public/data/countries.geojson')
+    .then(res => res.json())
+    .then(json => {
+      worldGeoJson.value = json;
+      updateMapLayers();
+    })
+    .catch(err => console.error('Failed to load countries GeoJSON:', err));
 });
 
 onBeforeUnmount(() => {
@@ -343,6 +372,24 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="dashboard" :class="themeMode">
+    <!-- Hidden SVG pattern definitions for colorblind accessibility -->
+    <svg width="0" height="0" style="position: absolute; pointer-events: none;">
+      <defs>
+        <!-- Dark Mode Diagonal Stripe Pattern -->
+        <pattern id="colorblind-stripes" width="12" height="12" patternTransform="rotate(45 0 0)"
+          patternUnits="userSpaceOnUse">
+          <rect width="12" height="12" fill="rgba(245, 158, 11, 0.15)" />
+          <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
+        </pattern>
+
+        <!-- Light Mode Diagonal Stripe Pattern -->
+        <pattern id="colorblind-stripes-light" width="12" height="12" patternTransform="rotate(45 0 0)"
+          patternUnits="userSpaceOnUse">
+          <rect width="12" height="12" fill="rgba(217, 119, 6, 0.12)" />
+          <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
+        </pattern>
+      </defs>
+    </svg>
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header-section">
