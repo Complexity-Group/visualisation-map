@@ -4,7 +4,7 @@ import { map, tileLayer, geoJSON, featureGroup, type Map as LeafletMap, type Lay
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
 
-// Types
+// Excel data structure
 class SheetColumnData {
   year: number | undefined;
   countries: string[] | undefined;
