@@ -69,11 +69,7 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'eswatini': { type: 'country', name: 'Swaziland' },
   'macau': { type: 'country', name: 'China' },
   'macau, sar of china': { type: 'country', name: 'China' },
-  'reunion': { type: 'country', name: 'France' },
-  'french guiana': { type: 'country', name: 'France' },
-  'martinique': { type: 'country', name: 'France' },
-  'guadeloupe': { type: 'country', name: 'France' },
-  'mayotte': { type: 'country', name: 'France' },
+
   'bermuda': { type: 'country', name: 'United Kingdom' },
   'gibraltar': { type: 'country', name: 'United Kingdom' },
   'saint helena': { type: 'country', name: 'United Kingdom' },
@@ -572,8 +568,8 @@ onMounted(() => {
 
   // Load world countries and US states GeoJSON databases in parallel
   Promise.all([
-    fetch('/data/countries.geojson').then(res => res.json()),
-    fetch('/data/us-states.geojson').then(res => res.json())
+    fetch('https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/countries.geojson').then(res => res.json()),
+    fetch('https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/us-states.geojson').then(res => res.json())
   ])
     .then(([countriesJson, statesJson]) => {
       // Geopolitical correction: move Crimea polygon from Russia (RUS) to Ukraine (UKR)
@@ -605,6 +601,46 @@ onMounted(() => {
           rus.geometry.coordinates.splice(crimeaPolyIndex, 1);
           ukr.geometry.coordinates.push(crimeaPoly);
         }
+      }
+
+      // Extract French overseas territories to prevent France from highlighting as Guadeloupe/Martinique etc.
+      const fra = countriesJson.features.find((f: any) => f.properties.NAME === 'France');
+      if (fra) {
+        const extractPolygons = (parentFeature: any, indices: number[], newName: string) => {
+          const newCoords: any[] = [];
+          const sortedIndices = [...indices].sort((a, b) => b - a);
+          sortedIndices.forEach(idx => {
+            newCoords.push(parentFeature.geometry.coordinates[idx]);
+            parentFeature.geometry.coordinates.splice(idx, 1);
+          });
+          
+          return {
+            type: 'Feature' as const,
+            properties: {
+              ...parentFeature.properties,
+              NAME: newName,
+              NAME_LONG: newName,
+              ADMIN: newName,
+              ISO_A3: newName.substring(0, 3).toUpperCase()
+            },
+            geometry: {
+              type: 'MultiPolygon' as const,
+              coordinates: newCoords
+            }
+          };
+        };
+
+        // Extract sub-polygons in descending order to avoid index shifting:
+        // Guadeloupe: indices 5, 6, 7
+        // Martinique: index 4
+        // Mayotte: index 3
+        // Réunion: index 2
+        // French Guiana: index 1
+        countriesJson.features.push(extractPolygons(fra, [5, 6, 7], 'Guadeloupe'));
+        countriesJson.features.push(extractPolygons(fra, [4], 'Martinique'));
+        countriesJson.features.push(extractPolygons(fra, [3], 'Mayotte'));
+        countriesJson.features.push(extractPolygons(fra, [2], 'Reunion'));
+        countriesJson.features.push(extractPolygons(fra, [1], 'French Guiana'));
       }
 
       worldGeoJson.value = countriesJson;
