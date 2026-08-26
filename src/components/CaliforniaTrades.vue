@@ -83,8 +83,8 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'tokelau islands': { type: 'country', name: 'New Zealand' },
   'tokelau': { type: 'country', name: 'New Zealand' },
   'cook islands': { type: 'country', name: 'New Zealand' },
-  'cocos (keeling) islands': { type: 'country', name: 'Australia' },
-  'christmas island': { type: 'country', name: 'Australia' },
+  'cocos (keeling) islands': { type: 'country', name: 'Indian Ocean Ter.' },
+  'christmas island': { type: 'country', name: 'Indian Ocean Ter.' },
   'aruba': { type: 'country', name: 'Netherlands' },
   'curacao': { type: 'country', name: 'Netherlands' },
   'sint maarten': { type: 'country', name: 'Netherlands' },
@@ -154,20 +154,26 @@ const getGeoJsonFeature = (partnerName: string) => {
     }
   } else {
     if (worldGeoJson.value) {
-      const feature = worldGeoJson.value.features.find((f: any) => {
+      const query = geoQuery.toLowerCase();
+      // Pass 1: exact matches
+      let feature = worldGeoJson.value.features.find((f: any) => {
         const name = (f.properties.NAME || '').toLowerCase();
         const longName = (f.properties.NAME_LONG || '').toLowerCase();
         const admin = (f.properties.ADMIN || '').toLowerCase();
-        const query = geoQuery.toLowerCase();
-
-        return name === query ||
-          longName === query ||
-          admin === query ||
-          query.includes(name) ||
-          query.includes(longName) ||
-          name.includes(query) ||
-          longName.includes(query);
+        return name === query || longName === query || admin === query;
       });
+
+      // Pass 2: substring matches
+      if (!feature) {
+        feature = worldGeoJson.value.features.find((f: any) => {
+          const name = (f.properties.NAME || '').toLowerCase();
+          const longName = (f.properties.NAME_LONG || '').toLowerCase();
+          return query.includes(name) ||
+                 query.includes(longName) ||
+                 name.includes(query) ||
+                 longName.includes(query);
+        });
+      }
       if (feature) return { type: 'country' as const, feature };
     }
   }
@@ -456,8 +462,26 @@ const updateMapLayers = () => {
         </div>
       `;
 
-      // If Import (or both): Add Stripe Layer
-      if (partner.isImport) {
+      // Draw shapes: Check if BOTH or Single
+      if (partner.isImport && partner.isExport) {
+        const bothLayer = geoJSON(feature, {
+          style: {
+            color: themeMode.value === 'dark' ? '#10b981' : '#059669',
+            weight: 1.5,
+            fillColor: themeMode.value === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)',
+            fillOpacity: 1.0,
+            lineJoin: 'round'
+          }
+        }).addTo(mapObject.value!);
+
+        bothLayer.bindPopup(popupHtml, {
+          closeButton: false,
+          className: 'custom-leaflet-popup',
+          offset: [0, -10]
+        });
+        setupHover(bothLayer, themeMode.value === 'dark' ? '#34d399' : '#047857', themeMode.value === 'dark' ? '#10b981' : '#059669');
+        newLayers.push(bothLayer);
+      } else if (partner.isImport) {
         const impLayer = geoJSON(feature, {
           style: {
             color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
@@ -475,10 +499,7 @@ const updateMapLayers = () => {
         });
         setupHover(impLayer, themeMode.value === 'dark' ? '#fbbf24' : '#b45309', themeMode.value === 'dark' ? '#f59e0b' : '#d97706');
         newLayers.push(impLayer);
-      }
-
-      // If Export (or both): Add Dot Layer
-      if (partner.isExport) {
+      } else if (partner.isExport) {
         const expLayer = geoJSON(feature, {
           style: {
             color: themeMode.value === 'dark' ? '#3b82f6' : '#2563eb',
@@ -528,7 +549,9 @@ onMounted(() => {
   const mapInst = map(mapContainer.value, {
     minZoom: 1.8,
     maxZoom: 10,
-    worldCopyJump: false
+    worldCopyJump: false,
+    maxBounds: [[-85, -180], [85, 180]],
+    maxBoundsViscosity: 1.0
   }).setView([25.0, -80.0], 2);
   mapObject.value = mapInst;
 
@@ -549,10 +572,41 @@ onMounted(() => {
 
   // Load world countries and US states GeoJSON databases in parallel
   Promise.all([
-    fetch('https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/countries.geojson').then(res => res.json()),
-    fetch('https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/us-states.geojson').then(res => res.json())
+    fetch('/data/countries.geojson').then(res => res.json()),
+    fetch('/data/us-states.geojson').then(res => res.json())
   ])
     .then(([countriesJson, statesJson]) => {
+      // Geopolitical correction: move Crimea polygon from Russia (RUS) to Ukraine (UKR)
+      const rus = countriesJson.features.find((f: any) => f.properties.ISO_A3 === 'RUS');
+      const ukr = countriesJson.features.find((f: any) => f.properties.ISO_A3 === 'UKR');
+      if (rus && ukr) {
+        let crimeaPolyIndex = -1;
+        rus.geometry.coordinates.forEach((poly: any, idx: number) => {
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          const traverse = (c: any) => {
+            if (typeof c[0] === 'number') {
+              const [x, y] = c;
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            } else {
+              c.forEach(traverse);
+            }
+          };
+          traverse(poly);
+          if (minX >= 32.0 && maxX <= 37.0 && minY >= 44.0 && maxY <= 46.5) {
+            crimeaPolyIndex = idx;
+          }
+        });
+
+        if (crimeaPolyIndex !== -1) {
+          const crimeaPoly = rus.geometry.coordinates[crimeaPolyIndex];
+          rus.geometry.coordinates.splice(crimeaPolyIndex, 1);
+          ukr.geometry.coordinates.push(crimeaPoly);
+        }
+      }
+
       worldGeoJson.value = countriesJson;
       usStatesGeoJson.value = statesJson;
       updateMapLayers();
@@ -597,6 +651,19 @@ onBeforeUnmount(() => {
         <!-- Light Mode Dot Pattern (Export) -->
         <pattern id="colorblind-dots-light" width="12" height="12" patternUnits="userSpaceOnUse">
           <rect width="12" height="12" fill="rgba(37, 99, 235, 0.12)" />
+          <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
+        </pattern>
+        <!-- Dark Mode Both Pattern (Import + Export) -->
+        <pattern id="colorblind-both" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+          <rect width="12" height="12" fill="rgba(16, 185, 129, 0.15)" />
+          <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
+          <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
+        </pattern>
+
+        <!-- Light Mode Both Pattern (Import + Export) -->
+        <pattern id="colorblind-both-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+          <rect width="12" height="12" fill="rgba(16, 185, 129, 0.12)" />
+          <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
           <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
         </pattern>
       </defs>
