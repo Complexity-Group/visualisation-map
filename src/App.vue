@@ -1,27 +1,36 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import InterestZones from './components/InterestZones.vue';
 import CaliforniaTrades from './components/CaliforniaTrades.vue';
 
-const activeTab = ref<'interest' | 'trades'>('interest');
+const activeTab = ref<'sources' | 'uses'>('sources');
 </script>
 
 <template>
   <div class="app-container">
     <!-- Floating Pill Tab Navigation -->
     <nav class="floating-tabs-nav">
-      <button class="tab-pill-btn" :class="{ active: activeTab === 'interest' }" @click="activeTab = 'interest'">
-        📍 Interest Points & Zones
+      <button class="tab-pill-btn" :class="{ active: activeTab === 'sources' }" @click="activeTab = 'sources'">
+        ⚡ Energy Sources
       </button>
-      <button class="tab-pill-btn" :class="{ active: activeTab === 'trades' }" @click="activeTab = 'trades'">
-        🚢 California Trades
+      <button class="tab-pill-btn" :class="{ active: activeTab === 'uses' }" @click="activeTab = 'uses'">
+        🏭 Energy Uses
       </button>
     </nav>
 
-    <!-- Active Tab Component (v-if manages fresh clean mounts and unmounts to prevent Leaflet conflicts) -->
+    <!-- Active Tab Component -->
     <div class="tab-content-container">
-      <InterestZones v-if="activeTab === 'interest'" />
-      <CaliforniaTrades v-else />
+      <CaliforniaTrades 
+        v-if="activeTab === 'sources'" 
+        key="sources"
+        dataSource="https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/energy_sources.xlsx" 
+        title="Energy Sources" 
+      />
+      <CaliforniaTrades 
+        v-else 
+        key="uses"
+        dataSource="https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/energy_uses.xlsx" 
+        title="Energy Uses" 
+      />
     </div>
   </div>
 </template>

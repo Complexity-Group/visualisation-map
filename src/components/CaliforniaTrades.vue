@@ -3,7 +3,10 @@ import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vu
 import { map, tileLayer, geoJSON, featureGroup, type Map as LeafletMap, type Layer } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
-
+const props = defineProps<{
+  dataSource: string;
+  title: string;
+}>();
 // Excel data structure
 class SheetColumnData {
   year: number | undefined;
@@ -67,8 +70,8 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'burma (myanmar)': { type: 'country', name: 'Myanmar' },
   'burma': { type: 'country', name: 'Myanmar' },
   'eswatini': { type: 'country', name: 'Swaziland' },
-  'macau': { type: 'country', name: 'China' },
-  'macau, sar of china': { type: 'country', name: 'China' },
+  'macau': { type: 'country', name: 'Macao' },
+  'macau, sar of china': { type: 'country', name: 'Macao' },
 
   'bermuda': { type: 'country', name: 'United Kingdom' },
   'gibraltar': { type: 'country', name: 'United Kingdom' },
@@ -102,7 +105,22 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'netherlands antilles': { type: 'country', name: 'Netherlands' },
   'serbia and montenegro (aug 2003 - dec 2006)': { type: 'country', name: 'Serbia' },
   'micronesia (federated states of)': { type: 'country', name: 'Micronesia' },
-  'syrian arab republic': { type: 'country', name: 'Syria' }
+  'syrian arab republic': { type: 'country', name: 'Syria' },
+
+  // New US State/Territory mappings for energy datasets
+  'united states - massachussetts': { type: 'state', name: 'Massachusetts' },
+  'united states - massachusettes': { type: 'state', name: 'Massachusetts' },
+  'united states - virigina': { type: 'state', name: 'Virginia' },
+  'united states - boston': { type: 'state', name: 'Massachusetts' },
+  'united states - charleston': { type: 'state', name: 'South Carolina' },
+  'united states - atlantic states': { type: 'state', name: 'Maryland' },
+  'united staes - alabama': { type: 'state', name: 'Alabama' },
+  'united states - samoa': { type: 'country', name: 'Samoa' },
+  'united states - guam': { type: 'country', name: 'Guam' },
+  'united states - american samoa': { type: 'country', name: 'American Samoa' },
+  'united states territory - american samoa': { type: 'country', name: 'American Samoa' },
+  'united states territory - guam': { type: 'country', name: 'Guam' },
+  'united states territory - puerto rico': { type: 'state', name: 'Puerto Rico' }
 };
 
 const getGeoJsonFeature = (partnerName: string) => {
@@ -124,9 +142,22 @@ const getGeoJsonFeature = (partnerName: string) => {
       baseName = baseName.split('(')[0].trim();
     }
 
-    if (baseName.startsWith('United States,') || baseName === 'Hawaii') {
+    const isUsStateOrTerritory = 
+      baseName.startsWith('United States Territory -') ||
+      baseName.startsWith('United States -') ||
+      baseName.startsWith('United States,') ||
+      baseName.startsWith('United Staes -') ||
+      baseName === 'Hawaii' ||
+      baseName === 'Alaska';
+
+    if (isUsStateOrTerritory) {
       type = 'state';
-      geoQuery = baseName === 'Hawaii' ? 'Hawaii' : baseName.replace('United States,', '').trim();
+      geoQuery = baseName
+        .replace(/^United States Territory -/, '')
+        .replace(/^United States -/, '')
+        .replace(/^United States,/, '')
+        .replace(/^United Staes -/, '')
+        .trim();
     } else {
       type = 'country';
       geoQuery = baseName;
@@ -181,12 +212,7 @@ const mapContainer = ref<HTMLDivElement | null>(null);
 const mapObject = shallowRef<LeafletMap | null>(null);
 const currentTileLayer = shallowRef<Layer | null>(null);
 
-const themeMode = ref<'dark' | 'light'>('dark');
-
-const toggleTheme = () => {
-  themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark';
-  setTileLayer(themeMode.value);
-};
+const themeMode = ref<'light' | 'dark'>('light');
 
 const allTradesData = ref<TradesData | null>(null);
 
@@ -322,10 +348,7 @@ const setTileLayer = (mode: 'dark' | 'light') => {
   }).addTo(mapObject.value);
 };
 
-// React to global theme change
-watch(themeMode, (mode) => {
-  setTileLayer(mode);
-});
+
 
 // Play/Pause timeline animation
 const togglePlay = () => {
@@ -554,7 +577,7 @@ onMounted(() => {
   setTileLayer(themeMode.value);
 
   // Load spreadsheet database asynchronously
-  parseSheetColumns()
+  parseSheetColumns(props.dataSource)
     .then((data) => {
       // Set isLoading to false BEFORE setting data, so watcher is not blocked
       isLoading.value = false;
@@ -707,17 +730,11 @@ onBeforeUnmount(() => {
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header-section">
-        <h2>California Trades</h2>
+        <h2>{{ title }}</h2>
         <p class="subtitle">Historical maritime trading connections (1822 - 1900)</p>
       </div>
 
-      <!-- Theme Toggle Button -->
-      <div class="sidebar-section">
-        <button class="theme-btn" @click="toggleTheme">
-          <span v-if="themeMode === 'dark'">☀️ Switch to Light Mode</span>
-          <span v-else>🌙 Switch to Dark Mode</span>
-        </button>
-      </div>
+
 
       <!-- Loading skeleton -->
       <div v-if="isLoading" class="sidebar-section loading-panel">
