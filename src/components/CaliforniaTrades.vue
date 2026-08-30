@@ -73,10 +73,10 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'macau': { type: 'country', name: 'Macao' },
   'macau, sar of china': { type: 'country', name: 'Macao' },
 
-  'bermuda': { type: 'country', name: 'United Kingdom' },
-  'gibraltar': { type: 'country', name: 'United Kingdom' },
-  'saint helena': { type: 'country', name: 'United Kingdom' },
-  'st helena': { type: 'country', name: 'United Kingdom' },
+  'bermuda': { type: 'country', name: 'Bermuda' },
+  'gibraltar': { type: 'country', name: 'Gibraltar' },
+  'saint helena': { type: 'country', name: 'Saint Helena' },
+  'st helena': { type: 'country', name: 'Saint Helena' },
   'west bank': { type: 'country', name: 'Palestine' },
   'west bank administered by israel': { type: 'country', name: 'Palestine' },
   'tokelau islands': { type: 'country', name: 'New Zealand' },
@@ -87,10 +87,10 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'aruba': { type: 'country', name: 'Netherlands' },
   'curacao': { type: 'country', name: 'Netherlands' },
   'sint maarten': { type: 'country', name: 'Netherlands' },
-  'cayman islands': { type: 'country', name: 'United Kingdom' },
-  'british virgin islands': { type: 'country', name: 'United Kingdom' },
-  'turks and caicos islands': { type: 'country', name: 'United Kingdom' },
-  'anguilla': { type: 'country', name: 'United Kingdom' },
+  'cayman islands': { type: 'country', name: 'Cayman Is.' },
+  'british virgin islands': { type: 'country', name: 'British Virgin Is.' },
+  'turks and caicos islands': { type: 'country', name: 'Turks and Caicos Is.' },
+  'anguilla': { type: 'country', name: 'Anguilla' },
   'cabo verde': { type: 'country', name: 'Cabo Verde' },
   'cape verde': { type: 'country', name: 'Cabo Verde' },
   'st. lucia': { type: 'country', name: 'Saint Lucia' },
@@ -453,90 +453,112 @@ const updateMapLayers = () => {
     });
   };
 
-  // Draw trade connections and highlight country/state shapes
+  // Group partners by their resolved GeoJSON feature to prevent duplicate rendering
+  const featureGroupMap = new Map<string, {
+    feature: any;
+    type: 'country' | 'state';
+    partners: Array<{ name: string; isImport: boolean; isExport: boolean }>;
+  }>();
+
   combinedPartners.value.forEach(partner => {
-    // Find and highlight country/state shape on the map using our resolving helper
     const res = getGeoJsonFeature(partner.name);
     if (res) {
-      const { feature } = res;
-      let tradeRoleText = '';
-      if (partner.isImport && partner.isExport) {
-        tradeRoleText = 'Import & Export Partner';
-      } else if (partner.isImport) {
-        tradeRoleText = 'Import Partner';
-      } else {
-        tradeRoleText = 'Export Partner';
-      }
+      const { feature, type } = res;
+      const key = type === 'state' 
+        ? `state:${feature.properties.name}` 
+        : `country:${feature.properties.NAME}`;
 
-      const popupHtml = `
-        <div class="custom-map-popup-card">
-          <div class="popup-card-content">
-            <h4 class="popup-card-title">${partner.name}</h4>
-            <p class="popup-card-description">Historical ${tradeRoleText.toLowerCase()} with California in the year ${activeYear.value}.</p>
-            <div class="popup-card-footer">
-              <span class="popup-card-tag">${tradeRoleText}</span>
-              <span class="popup-card-coords">Region Highlighted</span>
-            </div>
+      if (!featureGroupMap.has(key)) {
+        featureGroupMap.set(key, { feature, type, partners: [] });
+      }
+      featureGroupMap.get(key)!.partners.push(partner);
+    }
+  });
+
+  // Render a single layer for each unique geographic shape
+  featureGroupMap.forEach(({ feature, partners }) => {
+    const isImport = partners.some(p => p.isImport);
+    const isExport = partners.some(p => p.isExport);
+
+    // Merge names for popup card header
+    const displayName = partners.map(p => p.name).join(' & ');
+
+    let tradeRoleText = '';
+    if (isImport && isExport) {
+      tradeRoleText = 'Import & Export Partner';
+    } else if (isImport) {
+      tradeRoleText = 'Import Partner';
+    } else {
+      tradeRoleText = 'Export Partner';
+    }
+
+    const popupHtml = `
+      <div class="custom-map-popup-card">
+        <div class="popup-card-content">
+          <h4 class="popup-card-title">${displayName}</h4>
+          <p class="popup-card-description">Historical ${tradeRoleText.toLowerCase()} with California in the year ${activeYear.value}.</p>
+          <div class="popup-card-footer">
+            <span class="popup-card-tag">${tradeRoleText}</span>
+            <span class="popup-card-coords">Region Highlighted</span>
           </div>
         </div>
-      `;
+      </div>
+    `;
 
-      // Draw shapes: Check if BOTH or Single
-      if (partner.isImport && partner.isExport) {
-        const bothLayer = geoJSON(feature, {
-          style: {
-            color: themeMode.value === 'dark' ? '#10b981' : '#059669',
-            weight: 1.5,
-            fillColor: themeMode.value === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)',
-            fillOpacity: 1.0,
-            lineJoin: 'round'
-          }
-        }).addTo(mapObject.value!);
+    if (isImport && isExport) {
+      const bothLayer = geoJSON(feature, {
+        style: {
+          color: themeMode.value === 'dark' ? '#10b981' : '#059669',
+          weight: 1.5,
+          fillColor: themeMode.value === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)',
+          fillOpacity: 1.0,
+          lineJoin: 'round'
+        }
+      }).addTo(mapObject.value!);
 
-        bothLayer.bindPopup(popupHtml, {
-          closeButton: false,
-          className: 'custom-leaflet-popup',
-          offset: [0, -10]
-        });
-        setupHover(bothLayer, themeMode.value === 'dark' ? '#34d399' : '#047857', themeMode.value === 'dark' ? '#10b981' : '#059669');
-        newLayers.push(bothLayer);
-      } else if (partner.isImport) {
-        const impLayer = geoJSON(feature, {
-          style: {
-            color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
-            weight: 1.5,
-            fillColor: themeMode.value === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)',
-            fillOpacity: 1.0,
-            lineJoin: 'round'
-          }
-        }).addTo(mapObject.value!);
+      bothLayer.bindPopup(popupHtml, {
+        closeButton: false,
+        className: 'custom-leaflet-popup',
+        offset: [0, -10]
+      });
+      setupHover(bothLayer, themeMode.value === 'dark' ? '#34d399' : '#047857', themeMode.value === 'dark' ? '#10b981' : '#059669');
+      newLayers.push(bothLayer);
+    } else if (isImport) {
+      const impLayer = geoJSON(feature, {
+        style: {
+          color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
+          weight: 1.5,
+          fillColor: themeMode.value === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)',
+          fillOpacity: 1.0,
+          lineJoin: 'round'
+        }
+      }).addTo(mapObject.value!);
 
-        impLayer.bindPopup(popupHtml, {
-          closeButton: false,
-          className: 'custom-leaflet-popup',
-          offset: [0, -10]
-        });
-        setupHover(impLayer, themeMode.value === 'dark' ? '#fbbf24' : '#b45309', themeMode.value === 'dark' ? '#f59e0b' : '#d97706');
-        newLayers.push(impLayer);
-      } else if (partner.isExport) {
-        const expLayer = geoJSON(feature, {
-          style: {
-            color: themeMode.value === 'dark' ? '#3b82f6' : '#2563eb',
-            weight: 1.5,
-            fillColor: themeMode.value === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)',
-            fillOpacity: 1.0,
-            lineJoin: 'round'
-          }
-        }).addTo(mapObject.value!);
+      impLayer.bindPopup(popupHtml, {
+        closeButton: false,
+        className: 'custom-leaflet-popup',
+        offset: [0, -10]
+      });
+      setupHover(impLayer, themeMode.value === 'dark' ? '#fbbf24' : '#b45309', themeMode.value === 'dark' ? '#f59e0b' : '#d97706');
+      newLayers.push(impLayer);
+    } else if (isExport) {
+      const expLayer = geoJSON(feature, {
+        style: {
+          color: themeMode.value === 'dark' ? '#3b82f6' : '#2563eb',
+          weight: 1.5,
+          fillColor: themeMode.value === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)',
+          fillOpacity: 1.0,
+          lineJoin: 'round'
+        }
+      }).addTo(mapObject.value!);
 
-        expLayer.bindPopup(popupHtml, {
-          closeButton: false,
-          className: 'custom-leaflet-popup',
-          offset: [0, -10]
-        });
-        setupHover(expLayer, themeMode.value === 'dark' ? '#60a5fa' : '#1d4ed8', themeMode.value === 'dark' ? '#3b82f6' : '#2563eb');
-        newLayers.push(expLayer);
-      }
+      expLayer.bindPopup(popupHtml, {
+        closeButton: false,
+        className: 'custom-leaflet-popup',
+        offset: [0, -10]
+      });
+      setupHover(expLayer, themeMode.value === 'dark' ? '#60a5fa' : '#1d4ed8', themeMode.value === 'dark' ? '#3b82f6' : '#2563eb');
+      newLayers.push(expLayer);
     }
   });
 
@@ -665,6 +687,29 @@ onMounted(() => {
         countriesJson.features.push(extractPolygons(fra, [2], 'Reunion'));
         countriesJson.features.push(extractPolygons(fra, [1], 'French Guiana'));
       }
+
+      // Add custom standalone feature for Gibraltar at its actual coordinates south of Spain
+      countriesJson.features.push({
+        type: 'Feature' as const,
+        properties: {
+          NAME: 'Gibraltar',
+          NAME_LONG: 'Gibraltar',
+          ADMIN: 'Gibraltar',
+          ISO_A3: 'GIB'
+        },
+        geometry: {
+          type: 'Polygon' as const,
+          coordinates: [
+            [
+              [-5.37, 36.13],
+              [-5.37, 36.16],
+              [-5.34, 36.16],
+              [-5.34, 36.13],
+              [-5.37, 36.13]
+            ]
+          ]
+        }
+      });
 
       worldGeoJson.value = countriesJson;
       usStatesGeoJson.value = statesJson;

@@ -22,14 +22,14 @@ const activeTab = ref<'sources' | 'uses'>('sources');
       <CaliforniaTrades 
         v-if="activeTab === 'sources'" 
         key="sources"
-        dataSource="https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/energy_sources.xlsx" 
-        title="Energy Sources" 
+        dataSource="https://docs.google.com/spreadsheets/d/1oJoqz6jeqosqrdmpV-xmdahXt7c33hF3JygEKmF1uNA/export?format=xlsx"
+        title="Energy Sources"
       />
       <CaliforniaTrades 
         v-else 
         key="uses"
-        dataSource="https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/energy_uses.xlsx" 
-        title="Energy Uses" 
+        dataSource="https://docs.google.com/spreadsheets/d/1rYqMxqs9HRAnR76y_7wgg37UDHAlLTCB7wxeUm1m4uU/export?format=xlsx"
+        title="Energy Uses"
       />
     </div>
   </div>
