@@ -481,3 +481,155 @@
   color: #ffffff;
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
 }
+
+/* ==========================================================================
+   Responsive Mobile Optimization (@media max-width: 768px)
+   ========================================================================== */
+@media (max-width: 768px) {
+  .dashboard {
+    flex-direction: column;
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Map occupies the full viewport behind the bottom drawer */
+  .map-view {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+  }
+
+  /* Reposition Leaflet Zoom Controls on mobile to clear top tab bar */
+  .map-view .leaflet-top.leaflet-right {
+    top: 60px !important;
+    right: 12px !important;
+  }
+
+  /* Floating Pill Tab Navigation - Positioned at top center with z-index above map */
+  .floating-tabs-nav {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2500;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    padding: 3px;
+    border-radius: 9999px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    max-width: calc(100vw - 24px);
+  }
+
+  .tab-pill-btn {
+    padding: 6px 14px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  /* Mobile Bottom Sheet Drawer Handle Bar */
+  .mobile-drawer-handle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0 8px 0;
+    cursor: pointer;
+    width: 100%;
+    user-select: none;
+  }
+
+  .handle-bar {
+    width: 38px;
+    height: 4px;
+    border-radius: 2px;
+    background: #cbd5e1;
+    margin-bottom: 4px;
+    transition: background-color 0.2s ease;
+  }
+
+  .mobile-drawer-handle:hover .handle-bar {
+    background: #94a3b8;
+  }
+
+  .handle-text {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #64748b;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+
+  /* Sidebar - Bottom Sheet Drawer on Mobile */
+  .sidebar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    max-width: 100vw;
+    box-sizing: border-box;
+    border-radius: 20px 20px 0 0;
+    z-index: 2000;
+    padding: 8px 16px 20px 16px;
+    max-height: 230px; /* Collapsed height showing timeline slider & controls */
+    overflow-y: auto;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s ease;
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.18);
+  }
+
+  /* Expanded State for Mobile Sidebar Drawer */
+  .sidebar.mobile-expanded {
+    max-height: 70vh;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.28);
+  }
+
+  .sidebar-header-section {
+    margin-bottom: 10px;
+    text-align: center;
+  }
+
+  .sidebar-header-section h2 {
+    font-size: 17px;
+    margin: 0;
+  }
+
+  .timeline-header {
+    margin-bottom: 8px;
+  }
+
+  .timeline-header h3 {
+    font-size: 13px;
+  }
+
+  .play-btn {
+    padding: 6px 12px;
+    font-size: 11.5px;
+  }
+
+  .slider-container {
+    margin-bottom: 12px;
+  }
+
+  .location-card {
+    padding: 10px 12px;
+  }
+
+  .loc-title {
+    font-size: 13px;
+  }
+}
+
+/* Hide Mobile Drawer Handle on Desktop screens */
+@media (min-width: 769px) {
+  .mobile-drawer-handle {
+    display: none !important;
+  }
+}

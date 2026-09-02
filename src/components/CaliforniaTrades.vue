@@ -213,6 +213,7 @@ const mapObject = shallowRef<LeafletMap | null>(null);
 const currentTileLayer = shallowRef<Layer | null>(null);
 
 const themeMode = ref<'light' | 'dark'>('light');
+const isMobileExpanded = ref(false);
 
 const allTradesData = ref<TradesData | null>(null);
 
@@ -613,8 +614,8 @@ const updateMapLayers = () => {
 
   mapLayers.value = newLayers;
 
-  // Fit bounds dynamically to show all highlighted shapes
-  if (newLayers.length > 0) {
+  // Fit bounds dynamically ONLY when not playing timeline animation to prevent camera shake
+  if (newLayers.length > 0 && !isPlaying.value) {
     const group = featureGroup(newLayers);
     const bounds = group.getBounds();
     if (bounds.isValid()) {
@@ -822,7 +823,13 @@ onBeforeUnmount(() => {
       </defs>
     </svg>
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{ 'mobile-expanded': isMobileExpanded }">
+      <!-- Mobile Drawer Handle -->
+      <div class="mobile-drawer-handle" @click="isMobileExpanded = !isMobileExpanded">
+        <span class="handle-bar"></span>
+        <span class="handle-text">{{ isMobileExpanded ? 'Tap to Collapse' : 'Tap to View Partners (' + combinedPartners.length + ')' }}</span>
+      </div>
+
       <div class="sidebar-header-section">
         <h2>{{ title }}</h2>
       </div>
