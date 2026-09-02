@@ -440,27 +440,27 @@
   border-top-color: rgba(0, 0, 0, 0.06);
 }
 
-/* Floating Pill Tab Navigation Styles */
+/* Floating Pill Tab Navigation Styles (Positioned in map-view center) */
 .floating-tabs-nav {
-  position: fixed;
+  position: absolute;
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(12px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.12);
   padding: 4px;
   border-radius: 9999px;
-  z-index: 2000;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   gap: 4px;
 }
 
 .tab-pill-btn {
   background: transparent;
   border: none;
-  color: #94a3b8;
+  color: #475569;
   padding: 8px 18px;
   font-size: 13px;
   font-weight: 600;
@@ -473,7 +473,7 @@
 }
 
 .tab-pill-btn:hover {
-  color: #f8fafc;
+  color: #0f172a;
 }
 
 .tab-pill-btn.active {

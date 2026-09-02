@@ -7,29 +7,23 @@ const activeTab = ref<'sources' | 'uses'>('sources');
 
 <template>
   <div class="app-container">
-    <!-- Floating Pill Tab Navigation -->
-    <nav class="floating-tabs-nav">
-      <button class="tab-pill-btn" :class="{ active: activeTab === 'sources' }" @click="activeTab = 'sources'">
-        ⚡ Energy Sources
-      </button>
-      <button class="tab-pill-btn" :class="{ active: activeTab === 'uses' }" @click="activeTab = 'uses'">
-        🏭 Energy Uses
-      </button>
-    </nav>
-
     <!-- Active Tab Component -->
     <div class="tab-content-container">
       <CaliforniaTrades 
         v-if="activeTab === 'sources'" 
         key="sources"
+        activeTab="sources"
         dataSource="https://docs.google.com/spreadsheets/d/1oJoqz6jeqosqrdmpV-xmdahXt7c33hF3JygEKmF1uNA/export?format=xlsx"
         title="Energy Sources"
+        @switchTab="(tab) => activeTab = tab"
       />
       <CaliforniaTrades 
         v-else 
         key="uses"
+        activeTab="uses"
         dataSource="https://docs.google.com/spreadsheets/d/1rYqMxqs9HRAnR76y_7wgg37UDHAlLTCB7wxeUm1m4uU/export?format=xlsx"
         title="Energy Uses"
+        @switchTab="(tab) => activeTab = tab"
       />
     </div>
   </div>

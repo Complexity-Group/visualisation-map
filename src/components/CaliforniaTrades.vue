@@ -6,6 +6,11 @@ import * as XLSX from 'xlsx';
 const props = defineProps<{
   dataSource: string;
   title: string;
+  activeTab: 'sources' | 'uses';
+}>();
+
+const emit = defineEmits<{
+  (e: 'switchTab', tab: 'sources' | 'uses'): void;
 }>();
 // Excel data structure
 class SheetColumnData {
@@ -916,6 +921,15 @@ onBeforeUnmount(() => {
 
     <!-- Map View -->
     <main class="map-view">
+      <!-- Floating Pill Tab Navigation inside Map View for Perfect Center Positioning -->
+      <nav class="floating-tabs-nav">
+        <button class="tab-pill-btn" :class="{ active: activeTab === 'sources' }" @click="emit('switchTab', 'sources')">
+          ⚡ Energy Sources
+        </button>
+        <button class="tab-pill-btn" :class="{ active: activeTab === 'uses' }" @click="emit('switchTab', 'uses')">
+          🏭 Energy Uses
+        </button>
+      </nav>
       <div ref="mapContainer" class="map-element"></div>
     </main>
   </div>
