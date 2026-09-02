@@ -360,7 +360,7 @@ const togglePlay = () => {
       } else {
         selectedYearIndex.value = 0; // loop back
       }
-    }, 1800);
+    }, 1000);
   } else {
     if (playInterval) {
       clearInterval(playInterval);
@@ -464,6 +464,9 @@ const updateMapLayers = () => {
     const res = getGeoJsonFeature(partner.name);
     if (res) {
       const { feature, type } = res;
+      if (type === 'state' && feature.properties.name === 'California') {
+        return; // California is rendered as the primary dark yellow home base anchor
+      }
       const key = type === 'state' 
         ? `state:${feature.properties.name}` 
         : `country:${feature.properties.NAME}`;
@@ -561,6 +564,52 @@ const updateMapLayers = () => {
       newLayers.push(expLayer);
     }
   });
+
+  // Always render California as a solid dark yellow anchor state
+  if (usStatesGeoJson.value) {
+    const caliFeature = usStatesGeoJson.value.features.find((f: any) => f.properties.name === 'California');
+    if (caliFeature) {
+      const caliLayer = geoJSON(caliFeature, {
+        style: {
+          color: '#854d0e',
+          weight: 2,
+          fillColor: '#ca8a04',
+          fillOpacity: 0.85,
+          lineJoin: 'round'
+        }
+      }).addTo(mapObject.value!);
+
+      const caliPopupHtml = `
+        <div class="custom-map-popup-card">
+          <div class="popup-card-content">
+            <h4 class="popup-card-title">California</h4>
+            <p class="popup-card-description">State of California (Primary Trade Hub)</p>
+            <div class="popup-card-footer">
+              <span class="popup-card-tag" style="background: rgba(202, 138, 4, 0.2); color: #854d0e;">Home Region</span>
+              <span class="popup-card-coords">Anchor Base</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      caliLayer.bindPopup(caliPopupHtml, {
+        closeButton: false,
+        className: 'custom-leaflet-popup',
+        offset: [0, -10]
+      });
+
+      caliLayer.on({
+        mouseover: (e: any) => {
+          e.target.setStyle({ color: '#713f12', weight: 2.5, fillOpacity: 0.95 });
+        },
+        mouseout: (e: any) => {
+          e.target.setStyle({ color: '#854d0e', weight: 2, fillOpacity: 0.85 });
+        }
+      });
+
+      newLayers.push(caliLayer);
+    }
+  }
 
   mapLayers.value = newLayers;
 
@@ -776,7 +825,6 @@ onBeforeUnmount(() => {
     <aside class="sidebar">
       <div class="sidebar-header-section">
         <h2>{{ title }}</h2>
-        <p class="subtitle">Historical maritime trading connections (1822 - 1900)</p>
       </div>
 
 
