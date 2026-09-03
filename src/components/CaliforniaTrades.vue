@@ -366,7 +366,7 @@ const togglePlay = () => {
       } else {
         selectedYearIndex.value = 0; // loop back
       }
-    }, 1000);
+    }, 500);
   } else {
     if (playInterval) {
       clearInterval(playInterval);
