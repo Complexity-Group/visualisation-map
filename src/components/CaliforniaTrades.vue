@@ -336,25 +336,21 @@ const combinedPartners = computed(() => {
 });
 
 
-const lightTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const darkTiles = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const osmTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
-const setTileLayer = (mode: 'dark' | 'light') => {
+const setTileLayer = () => {
   if (!mapObject.value) return;
 
   if (currentTileLayer.value) {
     mapObject.value.removeLayer(currentTileLayer.value);
   }
 
-  const url = mode === 'dark' ? darkTiles : lightTiles;
   const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
-  currentTileLayer.value = tileLayer(url, {
+  currentTileLayer.value = tileLayer(osmTiles, {
     maxZoom: 18,
     attribution,
-    crossOrigin: 'anonymous',
-    noWrap: true,
-    bounds: [[-90, -180], [90, 180]]
+    noWrap: true
   }).addTo(mapObject.value);
 };
 
@@ -378,32 +374,24 @@ const captureScreenshot = async () => {
   });
 
   try {
-    // Fit map bounds to show all highlighted shapes (all trade partners + California)
-    if (mapLayers.value && mapLayers.value.length > 0) {
-      const group = featureGroup(mapLayers.value);
-      const bounds = group.getBounds();
-      if (bounds.isValid()) {
-        mapObject.value.fitBounds(bounds, {
-          padding: [40, 40],
-          maxZoom: 4.5,
-          animate: false
-        });
-      } else {
-        mapObject.value.setView([20, 0], 2, { animate: false });
-      }
-    } else {
-      mapObject.value.setView([20, 0], 2, { animate: false });
-    }
+    // Fit entire world map border to border with zero padding
+    mapObject.value.fitBounds([[-60, -180], [85, 180]], {
+      padding: [0, 0],
+      animate: false
+    });
 
-    // Short tick to ensure Leaflet renders tiles at full map view
-    await new Promise(resolve => setTimeout(resolve, 150));
+    // Tick to ensure Leaflet renders tiles at full map view
+    await new Promise(resolve => setTimeout(resolve, 250));
 
     const targetElement = mapContainer.value;
     
-    const dataUrl = await toJpeg(targetElement, {
-      quality: 1.0,
+    const rawDataUrl = await toJpeg(targetElement, {
+      quality: 0.95,
       pixelRatio: 1,
-      cacheBust: true,
+      cacheBust: false,
+      fontEmbedCSS: '',
+      backgroundColor: '#ffffff',
+      imagePlaceholder: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
       filter: (node: HTMLElement) => {
         if (node.classList) {
           // Filter out UI controls (zoom buttons, attribution, tab pill nav, sidebar)
@@ -419,12 +407,58 @@ const captureScreenshot = async () => {
       }
     });
 
+    // Dynamically crop out outer white margins/pillars to strictly match active map tile bounds
+    let finalDataUrl = rawDataUrl;
+    const tileImgs = Array.from(targetElement.querySelectorAll('.leaflet-tile-pane img.leaflet-tile')).filter((node) => {
+      const img = node as HTMLImageElement;
+      if (!img.complete || img.naturalWidth === 0) return false;
+      const style = window.getComputedStyle(img);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) return false;
+      if (img.parentElement) {
+        const pStyle = window.getComputedStyle(img.parentElement);
+        if (pStyle.display === 'none' || pStyle.visibility === 'hidden' || parseFloat(pStyle.opacity || '1') === 0) return false;
+      }
+      return true;
+    }) as HTMLImageElement[];
+
+    if (tileImgs.length > 0) {
+      const containerRect = targetElement.getBoundingClientRect();
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      tileImgs.forEach(img => {
+        const rect = img.getBoundingClientRect();
+        if (rect.left < minX) minX = rect.left;
+        if (rect.top < minY) minY = rect.top;
+        if (rect.right > maxX) maxX = rect.right;
+        if (rect.bottom > maxY) maxY = rect.bottom;
+      });
+
+      const cropX = Math.max(0, Math.floor(minX - containerRect.left));
+      const cropY = Math.max(0, Math.floor(minY - containerRect.top));
+      const cropWidth = Math.min(containerRect.width - cropX, Math.ceil(maxX - minX));
+      const cropHeight = Math.min(containerRect.height - cropY, Math.ceil(maxY - minY));
+
+      if (cropWidth > 50 && cropHeight > 50) {
+        const img = new Image();
+        img.src = rawDataUrl;
+        await new Promise(resolve => { img.onload = resolve; });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = cropWidth;
+        canvas.height = cropHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+          finalDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+        }
+      }
+    }
+
     const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
     const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}.jpg`;
     
     const link = document.createElement('a');
     link.download = fileName;
-    link.href = dataUrl;
+    link.href = finalDataUrl;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -453,20 +487,22 @@ const captureScreenshot = async () => {
 
 // Play/Pause timeline animation
 const togglePlay = () => {
-  isPlaying.value = !isPlaying.value;
   if (isPlaying.value) {
+    stopPlay();
+  } else {
+    // If timeline is already at the final year, restart playback from the beginning
+    if (selectedYearIndex.value >= availableYears.value.length - 1) {
+      selectedYearIndex.value = 0;
+    }
+
+    isPlaying.value = true;
     playInterval = setInterval(() => {
       if (selectedYearIndex.value < availableYears.value.length - 1) {
         selectedYearIndex.value++;
       } else {
-        selectedYearIndex.value = 0; // loop back
+        stopPlay(); // Remain at the end instead of resetting back to the beginning
       }
     }, 500);
-  } else {
-    if (playInterval) {
-      clearInterval(playInterval);
-      playInterval = null;
-    }
   }
 };
 
@@ -746,7 +782,7 @@ onMounted(() => {
   }).setView([25.0, -80.0], 2.2);
   mapObject.value = mapInst;
 
-  setTileLayer(themeMode.value);
+  setTileLayer();
 
   // Load spreadsheet database asynchronously
   parseSheetColumns(props.dataSource)
@@ -920,10 +956,10 @@ onBeforeUnmount(() => {
           <div class="slider-container">
             <input type="range" :min="0" :max="availableYears.length - 1" v-model.number="selectedYearIndex"
               class="timeline-slider" @input="stopPlay" />
-            <div class="slider-labels">
-              <span>1822</span>
-              <span>1860</span>
-              <span>1900</span>
+            <div class="slider-labels" v-if="availableYears.length > 0">
+              <span>{{ availableYears[0] }}</span>
+              <span v-if="availableYears.length > 2">{{ availableYears[Math.floor((availableYears.length - 1) / 2)] }}</span>
+              <span>{{ availableYears[availableYears.length - 1] }}</span>
             </div>
           </div>
         </div>
