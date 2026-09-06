@@ -312,6 +312,47 @@
   color: #94a3b8;
 }
 
+/* Action Button Group (Play & Screenshot) */
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.action-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.screenshot-btn {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #2563eb;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.screenshot-btn:hover:not(:disabled) {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.screenshot-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 /* Map Container */
 .map-view {
   flex-grow: 1;
@@ -322,6 +363,30 @@
 .map-element {
   width: 100%;
   height: 100%;
+}
+
+/* Ensure Leaflet container background matches OpenStreetMap ocean color so edges blend seamlessly */
+.leaflet-container {
+  background-color: #aad3df !important;
+}
+
+/* Clean up Leaflet SVG pane boundaries and prevent hairline border line artifacts */
+.leaflet-container svg,
+.leaflet-overlay-pane svg,
+.leaflet-tile-container,
+.leaflet-tile {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.leaflet-tile-container img.leaflet-tile {
+  box-shadow: 0 0 1px rgba(170, 211, 223, 0.4);
+}
+
+.leaflet-overlay-pane path {
+  stroke-linejoin: round;
+  stroke-linecap: round;
 }
 
 /* Custom Leaflet HTML Popup Styling (Positioned Next to Interest Point) */

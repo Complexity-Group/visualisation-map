@@ -3,6 +3,7 @@ import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vu
 import { map, tileLayer, geoJSON, featureGroup, type Map as LeafletMap, type Layer } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
+import { toJpeg } from 'html-to-image';
 const props = defineProps<{
   dataSource: string;
   title: string;
@@ -351,7 +352,101 @@ const setTileLayer = (mode: 'dark' | 'light') => {
   currentTileLayer.value = tileLayer(url, {
     maxZoom: 18,
     attribution,
+    crossOrigin: 'anonymous',
+    noWrap: true,
+    bounds: [[-90, -180], [90, 180]]
   }).addTo(mapObject.value);
+};
+
+const isCapturing = ref(false);
+
+const captureScreenshot = async () => {
+  if (isCapturing.value || !mapContainer.value || !mapObject.value) return;
+  isCapturing.value = true;
+
+  // Store user's current camera center and zoom level to restore after export
+  const originalCenter = mapObject.value.getCenter();
+  const originalZoom = mapObject.value.getZoom();
+
+  // Store original SVG pattern transforms & apply scale(0.5) for fine-grained screenshot patterns
+  const patternElements = mapContainer.value.querySelectorAll('pattern');
+  const originalTransforms = new Map<Element, string | null>();
+  patternElements.forEach(p => {
+    originalTransforms.set(p, p.getAttribute('patternTransform'));
+    const current = p.getAttribute('patternTransform') || '';
+    p.setAttribute('patternTransform', `${current} scale(0.5)`.trim());
+  });
+
+  try {
+    // Fit map bounds to show all highlighted shapes (all trade partners + California)
+    if (mapLayers.value && mapLayers.value.length > 0) {
+      const group = featureGroup(mapLayers.value);
+      const bounds = group.getBounds();
+      if (bounds.isValid()) {
+        mapObject.value.fitBounds(bounds, {
+          padding: [40, 40],
+          maxZoom: 4.5,
+          animate: false
+        });
+      } else {
+        mapObject.value.setView([20, 0], 2, { animate: false });
+      }
+    } else {
+      mapObject.value.setView([20, 0], 2, { animate: false });
+    }
+
+    // Short tick to ensure Leaflet renders tiles at full map view
+    await new Promise(resolve => setTimeout(resolve, 150));
+
+    const targetElement = mapContainer.value;
+    
+    const dataUrl = await toJpeg(targetElement, {
+      quality: 1.0,
+      pixelRatio: 1,
+      cacheBust: true,
+      filter: (node: HTMLElement) => {
+        if (node.classList) {
+          // Filter out UI controls (zoom buttons, attribution, tab pill nav, sidebar)
+          if (
+            node.classList.contains('leaflet-control-container') ||
+            node.classList.contains('floating-tabs-nav') ||
+            node.classList.contains('sidebar')
+          ) {
+            return false;
+          }
+        }
+        return true;
+      }
+    });
+
+    const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
+    const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}.jpg`;
+    
+    const link = document.createElement('a');
+    link.download = fileName;
+    link.href = dataUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (err) {
+    console.error('Failed to capture screenshot:', err);
+  } finally {
+    // Restore original SVG pattern transforms
+    patternElements.forEach(p => {
+      const orig = originalTransforms.get(p);
+      if (orig !== null && orig !== undefined) {
+        p.setAttribute('patternTransform', orig);
+      } else {
+        p.removeAttribute('patternTransform');
+      }
+    });
+
+    // Restore original camera position and zoom level
+    if (mapObject.value && originalCenter && originalZoom !== undefined) {
+      mapObject.value.setView(originalCenter, originalZoom, { animate: false });
+    }
+    isCapturing.value = false;
+  }
 };
 
 
@@ -641,14 +736,14 @@ watch(combinedPartners, () => {
 onMounted(() => {
   if (!mapContainer.value) return;
 
-  // Initialize Map focused on the world for trade routes immediately on mount
+  // Initialize Map focused on single world instance excluding Antarctica
   const mapInst = map(mapContainer.value, {
-    minZoom: 1.8,
+    minZoom: 2.2,
     maxZoom: 10,
     worldCopyJump: false,
-    maxBounds: [[-85, -180], [85, 180]],
+    maxBounds: [[-60, -180], [85, 180]],
     maxBoundsViscosity: 1.0
-  }).setView([25.0, -80.0], 2);
+  }).setView([25.0, -80.0], 2.2);
   mapObject.value = mapInst;
 
   setTileLayer(themeMode.value);
@@ -766,6 +861,9 @@ onMounted(() => {
         }
       });
 
+      // Filter out Antarctica to prevent giant boundary stroke box artifacts across 0°, ±180°, and -85°
+      countriesJson.features = countriesJson.features.filter((f: any) => f.properties.NAME !== 'Antarctica' && f.properties.ISO_A3 !== 'ATA');
+
       worldGeoJson.value = countriesJson;
       usStatesGeoJson.value = statesJson;
       updateMapLayers();
@@ -784,49 +882,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="dashboard" :class="themeMode">
-    <!-- Hidden SVG pattern definitions for colorblind accessibility -->
-    <svg width="0" height="0" style="position: absolute; pointer-events: none;">
-      <defs>
-        <!-- Dark Mode Diagonal Stripe Pattern (Import) -->
-        <pattern id="colorblind-stripes" width="12" height="12" patternTransform="rotate(45 0 0)"
-          patternUnits="userSpaceOnUse">
-          <rect width="12" height="12" fill="rgba(245, 158, 11, 0.15)" />
-          <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
-        </pattern>
-
-        <!-- Light Mode Diagonal Stripe Pattern (Import) -->
-        <pattern id="colorblind-stripes-light" width="12" height="12" patternTransform="rotate(45 0 0)"
-          patternUnits="userSpaceOnUse">
-          <rect width="12" height="12" fill="rgba(217, 119, 6, 0.12)" />
-          <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
-        </pattern>
-
-        <!-- Dark Mode Dot Pattern (Export) -->
-        <pattern id="colorblind-dots" width="12" height="12" patternUnits="userSpaceOnUse">
-          <rect width="12" height="12" fill="rgba(59, 130, 246, 0.15)" />
-          <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
-        </pattern>
-
-        <!-- Light Mode Dot Pattern (Export) -->
-        <pattern id="colorblind-dots-light" width="12" height="12" patternUnits="userSpaceOnUse">
-          <rect width="12" height="12" fill="rgba(37, 99, 235, 0.12)" />
-          <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
-        </pattern>
-        <!-- Dark Mode Both Pattern (Import + Export) -->
-        <pattern id="colorblind-both" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-          <rect width="12" height="12" fill="rgba(16, 185, 129, 0.15)" />
-          <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
-          <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
-        </pattern>
-
-        <!-- Light Mode Both Pattern (Import + Export) -->
-        <pattern id="colorblind-both-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-          <rect width="12" height="12" fill="rgba(16, 185, 129, 0.12)" />
-          <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
-          <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
-        </pattern>
-      </defs>
-    </svg>
     <!-- Sidebar -->
     <aside class="sidebar" :class="{ 'mobile-expanded': isMobileExpanded }">
       <!-- Mobile Drawer Handle -->
@@ -851,10 +906,16 @@ onBeforeUnmount(() => {
         <div class="sidebar-section timeline-panel">
           <div class="timeline-header">
             <h3>Year: <span class="highlight-year">{{ activeYear }}</span></h3>
-            <button class="play-btn" @click="togglePlay" :class="{ playing: isPlaying }">
-              <span v-if="isPlaying">⏸ Pause Autoplay</span>
-              <span v-else>▶ Play Timeline</span>
-            </button>
+            <div class="action-btn-group">
+              <button class="play-btn" @click="togglePlay" :class="{ playing: isPlaying }">
+                <span v-if="isPlaying">⏸ Pause</span>
+                <span v-else>▶ Play</span>
+              </button>
+              <button class="screenshot-btn" @click="captureScreenshot" :disabled="isCapturing" title="Download JPEG Screenshot of current year">
+                <span v-if="isCapturing">⏳ Capturing...</span>
+                <span v-else>📸 JPEG</span>
+              </button>
+            </div>
           </div>
           <div class="slider-container">
             <input type="range" :min="0" :max="availableYears.length - 1" v-model.number="selectedYearIndex"
@@ -930,7 +991,50 @@ onBeforeUnmount(() => {
           🏭 Energy Uses
         </button>
       </nav>
-      <div ref="mapContainer" class="map-element"></div>
+      <div ref="mapContainer" class="map-element">
+        <!-- Hidden SVG pattern definitions inside map container for screenshot capture compatibility -->
+        <svg width="0" height="0" style="position: absolute; pointer-events: none; z-index: -1;">
+          <defs>
+            <!-- Dark Mode Diagonal Stripe Pattern (Import) -->
+            <pattern id="colorblind-stripes" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="12" height="12" fill="rgba(245, 158, 11, 0.15)" />
+              <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
+            </pattern>
+
+            <!-- Light Mode Diagonal Stripe Pattern (Import) -->
+            <pattern id="colorblind-stripes-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="12" height="12" fill="rgba(217, 119, 6, 0.12)" />
+              <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
+            </pattern>
+
+            <!-- Dark Mode Dot Pattern (Export) -->
+            <pattern id="colorblind-dots" width="12" height="12" patternUnits="userSpaceOnUse">
+              <rect width="12" height="12" fill="rgba(59, 130, 246, 0.15)" />
+              <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
+            </pattern>
+
+            <!-- Light Mode Dot Pattern (Export) -->
+            <pattern id="colorblind-dots-light" width="12" height="12" patternUnits="userSpaceOnUse">
+              <rect width="12" height="12" fill="rgba(37, 99, 235, 0.12)" />
+              <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
+            </pattern>
+
+            <!-- Dark Mode Both Pattern (Import + Export) -->
+            <pattern id="colorblind-both" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.15)" />
+              <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
+              <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
+            </pattern>
+
+            <!-- Light Mode Both Pattern (Import + Export) -->
+            <pattern id="colorblind-both-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.12)" />
+              <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
+              <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
+            </pattern>
+          </defs>
+        </svg>
+      </div>
     </main>
   </div>
 </template>
