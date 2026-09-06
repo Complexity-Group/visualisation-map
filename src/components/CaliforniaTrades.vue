@@ -373,17 +373,24 @@ const captureScreenshot = async () => {
     p.setAttribute('patternTransform', `${current} scale(0.5)`.trim());
   });
 
+  const targetElement = mapContainer.value;
+  const originalWidthStyle = targetElement.style.width;
+  const originalHeightStyle = targetElement.style.height;
+
   try {
+    // Force a 1400x750 desktop layout during capture so mobile exports the full map view like desktop
+    targetElement.style.width = '1400px';
+    targetElement.style.height = '750px';
+    mapObject.value.invalidateSize({ animate: false });
+
     // Fit entire world map border to border with zero padding
     mapObject.value.fitBounds([[-60, -180], [85, 180]], {
       padding: [0, 0],
       animate: false
     });
 
-    // Tick to ensure Leaflet renders tiles at full map view
-    await new Promise(resolve => setTimeout(resolve, 250));
-
-    const targetElement = mapContainer.value;
+    // Wait for Leaflet to re-layout tile grid at 1400x750
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     const rawDataUrl = await toJpeg(targetElement, {
       quality: 0.95,
@@ -475,9 +482,16 @@ const captureScreenshot = async () => {
       }
     });
 
-    // Restore original camera position and zoom level
-    if (mapObject.value && originalCenter && originalZoom !== undefined) {
-      mapObject.value.setView(originalCenter, originalZoom, { animate: false });
+    // Restore original container element style & camera position
+    if (targetElement) {
+      targetElement.style.width = originalWidthStyle;
+      targetElement.style.height = originalHeightStyle;
+    }
+    if (mapObject.value) {
+      mapObject.value.invalidateSize({ animate: false });
+      if (originalCenter && originalZoom !== undefined) {
+        mapObject.value.setView(originalCenter, originalZoom, { animate: false });
+      }
     }
     isCapturing.value = false;
   }
@@ -750,23 +764,33 @@ const updateMapLayers = () => {
 
   mapLayers.value = newLayers;
 
-  // Fit bounds dynamically ONLY when not playing timeline animation to prevent camera shake
-  if (newLayers.length > 0 && !isPlaying.value) {
+  // Fit bounds dynamically ON INITIAL LOAD ONLY to prevent camera jumping when resizing on mobile
+  if (newLayers.length > 0 && !isPlaying.value && isInitialLoad.value) {
+    isInitialLoad.value = false;
     const group = featureGroup(newLayers);
     const bounds = group.getBounds();
     if (bounds.isValid()) {
-      mapObject.value.flyToBounds(bounds, {
-        padding: [50, 50],
+      mapObject.value.fitBounds(bounds, {
+        padding: [30, 30],
         maxZoom: 4.5,
-        animate: true,
-        duration: 1.0
+        animate: false
       });
     }
   }
 };
 
+const isInitialLoad = ref(true);
+
 watch(combinedPartners, () => {
   updateMapLayers();
+});
+
+watch(isMobileExpanded, () => {
+  setTimeout(() => {
+    if (mapObject.value) {
+      mapObject.value.invalidateSize({ animate: false });
+    }
+  }, 360);
 });
 
 onMounted(() => {
@@ -905,10 +929,19 @@ onMounted(() => {
       updateMapLayers();
     })
     .catch(err => console.error('Failed to load GeoJSON databases:', err));
+
+  window.addEventListener('resize', handleResize);
 });
+
+const handleResize = () => {
+  if (mapObject.value) {
+    mapObject.value.invalidateSize({ animate: false });
+  }
+};
 
 onBeforeUnmount(() => {
   stopPlay();
+  window.removeEventListener('resize', handleResize);
   if (mapObject.value) {
     mapObject.value.remove();
     mapObject.value = null;
