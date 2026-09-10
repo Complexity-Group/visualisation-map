@@ -1,9 +1,49 @@
 <script setup lang="ts">
+/**
+ * CaliforniaTrades.vue - Interactive Map Visualisation Component
+ * 
+ * ARCHITECTURE & SYSTEM OVERVIEW:
+ * 
+ * 1. XLSX Data Fetching & Sheet Parsing (`parseSheetColumns`):
+ *    - Fetches live Excel files from Google Sheets via the `dataSource` prop.
+ *    - Parses two separate worksheet tabs:
+ *      * "Imports": Historical energy/trade sources flowing INTO California.
+ *      * "Exports": Historical energy/trade uses flowing OUT OF California.
+ *    - Columns represent years (parsed from header rows), and rows contain lists of trade partner regions.
+ *    - Builds a unified `TradesData` reactive model containing structured arrays of imports/exports per year.
+ * 
+ * 2. GeoJSON Feature Resolution & Geopolitical Alias System (`getGeoJsonFeature`):
+ *    - Downloads two GeoJSON spatial feature collections on initialization:
+ *      * World Countries GeoJSON (`custom.geo.json`): Global country boundaries.
+ *      * US States GeoJSON (`us-states.json`): Detailed US state boundaries.
+ *    - Uses a dictionary (`tradePartnerToGeoJson`) and dynamic fallback heuristics to match spreadsheet strings:
+ *      * Differentiates US states (e.g., "Hawaii", "United States, Massachussetts", "United States Territory - Oregon") from sovereign countries.
+ *      * Resolves historical/colonial port names, archaic spellings, and territory designations (e.g., "China, Canton" -> China, "India, Calcutta" -> India, "Burma" -> Myanmar, "Great Britain" -> United Kingdom).
+ *      * Performs multi-pass matching (exact property name/ADMIN match -> substring search) against GeoJSON features.
+ * 
+ * 3. Map Representation & Import/Export Visual Marking (`updateMapLayers`):
+ *    - Groups trade partners by resolved GeoJSON shape to avoid duplicate stacked polygons.
+ *    - Applies colorblind-accessible SVG pattern fills and distinct border colors based on trade relationship:
+ *      * Import Partner Only: Amber/Gold outline (#d97706) with SVG diagonal stripes fill (`url(#colorblind-stripes)`).
+ *      * Export Partner Only: Blue outline (#2563eb) with SVG dots pattern fill (`url(#colorblind-dots)`).
+ *      * Import & Export Partner (Both): Emerald green outline (#059669) with combined SVG stripes+dots fill (`url(#colorblind-both)`).
+ *      * Anchor Home Region (California): Solid dark yellow fill (#ca8a04, opacity 0.85) marking California as the main trade hub.
+ *    - Provides interactive mouseover hover glows, dynamic Leaflet popup cards, and fly-to focus animations.
+ * 
+ * 4. Full World Map JPEG Screenshot Export Pipeline (`captureScreenshot`):
+ *    - Minimum Zoom Camera Set: Sets camera view to full-world zoom (`map.getMinZoom()`) covering all continents.
+ *    - Mobile Resolution Scaling: Temporarily scales container to desktop dimensions (1200x650px) on mobile viewports.
+ *    - SVG Pattern Transform Correction: Applies `patternTransform="scale(0.5)"` to SVG pattern elements during capture so patterns scale correctly at min zoom.
+ *    - UI Element Filtering: Filters out sidebar drawers, tab buttons, controls, and popups prior to capturing DOM screenshot with `html-to-image`.
+ *    - Clean Restoration: Guarantees original camera center, zoom, container dimensions, and pattern transforms are restored in `finally`.
+ */
+
 import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vue';
 import { map, tileLayer, geoJSON, featureGroup, type Map as LeafletMap, type Layer } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
 import { toJpeg } from 'html-to-image';
+
 const props = defineProps<{
   dataSource: string;
   title: string;
@@ -374,38 +414,62 @@ const captureScreenshot = async () => {
   });
 
   const targetElement = mapContainer.value;
+  const isMobile = window.innerWidth <= 768;
   const originalWidthStyle = targetElement.style.width;
   const originalHeightStyle = targetElement.style.height;
 
   try {
-    // Force a 1400x750 desktop layout during capture so mobile exports the full map view like desktop
-    targetElement.style.width = '1400px';
-    targetElement.style.height = '750px';
-    mapObject.value.invalidateSize({ animate: false });
+    // On mobile devices, temporarily use desktop resolution for capturing full map
+    if (isMobile) {
+      targetElement.style.width = '1200px';
+      targetElement.style.height = '650px';
+      mapObject.value.invalidateSize({ animate: false });
+    }
 
-    // Fit entire world map border to border with zero padding
+    // 1. Zoom to the lowest zoom level covering the entire world map
+    const lowestZoom = mapObject.value.getMinZoom();
+    mapObject.value.setView([20, 0], lowestZoom, { animate: false });
     mapObject.value.fitBounds([[-60, -180], [85, 180]], {
       padding: [0, 0],
       animate: false
     });
 
-    // Wait for Leaflet to re-layout tile grid at 1400x750
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // Wait for all Leaflet tile images to finish loading at lowest zoom
+    await new Promise(resolve => {
+      let attempts = 0;
+      const checkTiles = () => {
+        const tiles = Array.from(targetElement.querySelectorAll('.leaflet-tile-pane img.leaflet-tile')) as HTMLImageElement[];
+        if (tiles.length > 0 && tiles.every(img => img.complete)) {
+          resolve(true);
+        } else if (attempts >= 25) {
+          resolve(false);
+        } else {
+          attempts++;
+          setTimeout(checkTiles, 100);
+        }
+      };
+      setTimeout(checkTiles, 150);
+    });
     
+    // 2. Hide all buttons, panes, controls, floating tabs, sidebars, and popups during capture
     const rawDataUrl = await toJpeg(targetElement, {
-      quality: 0.95,
+      quality: 1,
       pixelRatio: 1,
       cacheBust: false,
       fontEmbedCSS: '',
       backgroundColor: '#ffffff',
-      imagePlaceholder: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+      imagePlaceholder: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORCYII=',
       filter: (node: HTMLElement) => {
         if (node.classList) {
-          // Filter out UI controls (zoom buttons, attribution, tab pill nav, sidebar)
+          // Filter out UI controls (zoom buttons, attribution, tab pill nav, sidebar, popups)
           if (
             node.classList.contains('leaflet-control-container') ||
+            node.classList.contains('leaflet-control') ||
+            node.classList.contains('leaflet-popup-pane') ||
+            node.classList.contains('leaflet-popup') ||
             node.classList.contains('floating-tabs-nav') ||
-            node.classList.contains('sidebar')
+            node.classList.contains('sidebar') ||
+            node.classList.contains('mobile-drawer-handle')
           ) {
             return false;
           }
@@ -483,7 +547,7 @@ const captureScreenshot = async () => {
     });
 
     // Restore original container element style & camera position
-    if (targetElement) {
+    if (isMobile && targetElement) {
       targetElement.style.width = originalWidthStyle;
       targetElement.style.height = originalHeightStyle;
     }
@@ -1066,38 +1130,38 @@ onBeforeUnmount(() => {
           <defs>
             <!-- Dark Mode Diagonal Stripe Pattern (Import) -->
             <pattern id="colorblind-stripes" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(245, 158, 11, 0.15)" />
+              <rect width="12" height="12" fill="rgba(245, 158, 11, 0.35)" />
               <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
             </pattern>
 
             <!-- Light Mode Diagonal Stripe Pattern (Import) -->
             <pattern id="colorblind-stripes-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(217, 119, 6, 0.12)" />
+              <rect width="12" height="12" fill="rgba(217, 119, 6, 0.32)" />
               <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
             </pattern>
 
             <!-- Dark Mode Dot Pattern (Export) -->
             <pattern id="colorblind-dots" width="12" height="12" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(59, 130, 246, 0.15)" />
+              <rect width="12" height="12" fill="rgba(59, 130, 246, 0.35)" />
               <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
             </pattern>
 
             <!-- Light Mode Dot Pattern (Export) -->
             <pattern id="colorblind-dots-light" width="12" height="12" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(37, 99, 235, 0.12)" />
+              <rect width="12" height="12" fill="rgba(37, 99, 235, 0.32)" />
               <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
             </pattern>
 
             <!-- Dark Mode Both Pattern (Import + Export) -->
             <pattern id="colorblind-both" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.15)" />
+              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.35)" />
               <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
               <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
             </pattern>
 
             <!-- Light Mode Both Pattern (Import + Export) -->
             <pattern id="colorblind-both-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.12)" />
+              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.32)" />
               <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
               <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
             </pattern>

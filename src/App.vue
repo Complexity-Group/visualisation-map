@@ -1,14 +1,24 @@
 <script setup lang="ts">
+/**
+ * App.vue - Root Container Component for Map Visualisation Application
+ * 
+ * Manages top-level state for switching between the two primary trade/energy datasets:
+ * - "Energy Sources" (Imports into California)
+ * - "Energy Uses" (Exports from California)
+ */
+
 import { ref } from 'vue';
 import CaliforniaTrades from './components/CaliforniaTrades.vue';
 
+// Active dataset view tab selection ('sources' | 'uses')
 const activeTab = ref<'sources' | 'uses'>('sources');
 </script>
 
 <template>
   <div class="app-container">
-    <!-- Active Tab Component -->
+    <!-- Active Tab Component Container -->
     <div class="tab-content-container">
+      <!-- Energy Sources Tab: Uses the Energy Sources XLSX Google Sheet URL -->
       <CaliforniaTrades 
         v-if="activeTab === 'sources'" 
         key="sources"
@@ -17,6 +27,7 @@ const activeTab = ref<'sources' | 'uses'>('sources');
         title="Energy Sources"
         @switchTab="(tab) => activeTab = tab"
       />
+      <!-- Energy Uses Tab: Uses the Energy Uses XLSX Google Sheet URL -->
       <CaliforniaTrades 
         v-else 
         key="uses"
@@ -44,3 +55,4 @@ const activeTab = ref<'sources' | 'uses'>('sources');
   height: 100%;
 }
 </style>
+
