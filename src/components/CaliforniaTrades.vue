@@ -24,25 +24,30 @@
  * 3. Map Representation & Import/Export Visual Marking (`updateMapLayers`):
  *    - Groups trade partners by resolved GeoJSON shape to avoid duplicate stacked polygons.
  *    - Applies colorblind-accessible SVG pattern fills and distinct border colors based on trade relationship:
- *      * Import Partner Only: Amber/Gold outline (#d97706) with SVG diagonal stripes fill (`url(#colorblind-stripes)`).
- *      * Export Partner Only: Blue outline (#2563eb) with SVG dots pattern fill (`url(#colorblind-dots)`).
- *      * Import & Export Partner (Both): Emerald green outline (#059669) with combined SVG stripes+dots fill (`url(#colorblind-both)`).
+ *      * Import Partner Only: Vibrant orange outline (#ea580c/#f97316) with SVG orange diagonal stripes fill (`url(#colorblind-stripes)`).
+ *      * Export Partner Only: Emerald green outline (#059669/#10b981) with SVG green dots pattern fill (`url(#colorblind-dots)`).
+ *      * Import & Export Partner (Both): Emerald green outline (#059669/#10b981) with combined SVG orange stripes + green dots fill (`url(#colorblind-both)`).
  *      * Anchor Home Region (California): Solid dark yellow fill (#ca8a04, opacity 0.85) marking California as the main trade hub.
  *    - Provides interactive mouseover hover glows, dynamic Leaflet popup cards, and fly-to focus animations.
  * 
- * 4. Full World Map JPEG Screenshot Export Pipeline (`captureScreenshot`):
- *    - Minimum Zoom Camera Set: Sets camera view to full-world zoom (`map.getMinZoom()`) covering all continents.
+ * 4. Full World Map JPEG Screenshot Export Pipeline (`captureScreenshot` & Leaflet.BigImage):
+ *    - Uses Leaflet.BigImage plugin (https://github.com/pasichnykvasyl/Leaflet.BigImage) for direct, high-performance canvas tile rendering.
+ *    - CustomBigImageControl subclass:
+ *      * Extracts all rings for MultiPolygons (e.g. USA, Canada, Japan, UK) to render all islands and regions.
+ *      * Creates CanvasPatterns matching the SVG colorblind patterns (stripes, dots, combined) with transparent backgrounds.
+ *      * Exports crisp high-quality JPEG images with CORS-enabled tile layers.
+ *    - Minimum Zoom Camera Framing: Temporarily sets camera view to full-world zoom (`map.getMinZoom()`) covering all continents.
  *    - Mobile Resolution Scaling: Temporarily scales container to desktop dimensions (1200x650px) on mobile viewports.
- *    - SVG Pattern Transform Correction: Applies `patternTransform="scale(0.5)"` to SVG pattern elements during capture so patterns scale correctly at min zoom.
- *    - UI Element Filtering: Filters out sidebar drawers, tab buttons, controls, and popups prior to capturing DOM screenshot with `html-to-image`.
- *    - Clean Restoration: Guarantees original camera center, zoom, container dimensions, and pattern transforms are restored in `finally`.
+ *    - Clean Restoration: Guarantees original camera center, zoom, and container dimensions are restored in `finally`.
  */
 
 import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vue';
-import { map, tileLayer, geoJSON, featureGroup, type Map as LeafletMap, type Layer } from 'leaflet';
+import { map, tileLayer, geoJSON, featureGroup, Point, Bounds, TileLayer, Marker, Circle, Path, type Map as LeafletMap, type Layer } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
-import { toJpeg } from 'html-to-image';
+import { BigImageControl, type BigImageControlOptions } from 'leaflet.BigImage';
+import 'leaflet.BigImage/dist/Leaflet.BigImage.min.css';
+
 
 const props = defineProps<{
   dataSource: string;
@@ -390,173 +395,633 @@ const setTileLayer = () => {
   currentTileLayer.value = tileLayer(osmTiles, {
     maxZoom: 18,
     attribution,
+    crossOrigin: 'anonymous',
+    bounds: [[-85.0511287798, -180], [85.0511287798, 180]],
     noWrap: true
   }).addTo(mapObject.value);
 };
 
-const isCapturing = ref(false);
+// Helper to extract all coordinate rings from a single Polygon or MultiPolygon
+function extractRings(latlngs: any): any[][] {
+  if (!Array.isArray(latlngs) || latlngs.length === 0) return [];
+  if (latlngs[0] && typeof latlngs[0].lat === 'number') {
+    return [latlngs];
+  }
+  const rings: any[][] = [];
+  for (const item of latlngs) {
+    rings.push(...extractRings(item));
+  }
+  return rings;
+}
 
-const captureScreenshot = async () => {
-  if (isCapturing.value || !mapContainer.value || !mapObject.value) return;
-  isCapturing.value = true;
+// Helper to create a scaled-down canvas pattern matching the SVG colorblind patterns (finer orange lines, smaller green dots)
+function getCanvasPattern(
+  ctx: CanvasRenderingContext2D,
+  type: 'stripes' | 'dots' | 'both',
+  lineColor: string = '#ea580c',
+  dotColor: string = '#059669'
+): CanvasPattern | string {
+  const pCanvas = document.createElement('canvas');
+  if (type === 'stripes') {
+    pCanvas.width = 12;
+    pCanvas.height = 12;
+    const pctx = pCanvas.getContext('2d');
+    if (!pctx) return lineColor;
+    pctx.fillStyle = lineColor;
+    pctx.globalAlpha = 0.10;
+    pctx.fillRect(0, 0, 12, 12);
+    pctx.globalAlpha = 0.85;
+    pctx.strokeStyle = lineColor; // Orange lines
+    pctx.lineWidth = 1.6; // Scaled down line thickness
+    pctx.beginPath();
+    pctx.moveTo(0, 0); pctx.lineTo(12, 12);
+    pctx.moveTo(-3, 9); pctx.lineTo(3, 15);
+    pctx.moveTo(9, -3); pctx.lineTo(15, 3);
+    pctx.stroke();
+    return ctx.createPattern(pCanvas, 'repeat') || lineColor;
+  } else if (type === 'dots') {
+    pCanvas.width = 12;
+    pCanvas.height = 12;
+    const pctx = pCanvas.getContext('2d');
+    if (!pctx) return dotColor;
+    pctx.fillStyle = dotColor;
+    pctx.globalAlpha = 0.10;
+    pctx.fillRect(0, 0, 12, 12);
+    pctx.globalAlpha = 0.85;
+    pctx.fillStyle = dotColor; // Green dots
+    pctx.beginPath();
+    pctx.arc(6, 6, 1.6, 0, Math.PI * 2); // Scaled down dot radius
+    pctx.fill();
+    return ctx.createPattern(pCanvas, 'repeat') || dotColor;
+  } else if (type === 'both') {
+    // Both: Smaller orange diagonal lines + smaller green dots
+    pCanvas.width = 12;
+    pCanvas.height = 12;
+    const pctx = pCanvas.getContext('2d');
+    if (!pctx) return lineColor;
 
-  // Store user's current camera center and zoom level to restore after export
-  const originalCenter = mapObject.value.getCenter();
-  const originalZoom = mapObject.value.getZoom();
+    // Subtle background tint
+    pctx.fillStyle = lineColor;
+    pctx.globalAlpha = 0.07;
+    pctx.fillRect(0, 0, 12, 12);
 
-  // Store original SVG pattern transforms & apply scale(0.5) for fine-grained screenshot patterns
-  const patternElements = mapContainer.value.querySelectorAll('pattern');
-  const originalTransforms = new Map<Element, string | null>();
-  patternElements.forEach(p => {
-    originalTransforms.set(p, p.getAttribute('patternTransform'));
-    const current = p.getAttribute('patternTransform') || '';
-    p.setAttribute('patternTransform', `${current} scale(0.5)`.trim());
+    // 1. Scaled down orange lines
+    pctx.globalAlpha = 0.85;
+    pctx.strokeStyle = lineColor; // Orange (#ea580c)
+    pctx.lineWidth = 1.6;
+    pctx.beginPath();
+    pctx.moveTo(0, 0); pctx.lineTo(12, 12);
+    pctx.moveTo(-3, 9); pctx.lineTo(3, 15);
+    pctx.moveTo(9, -3); pctx.lineTo(15, 3);
+    pctx.stroke();
+
+    // 2. Scaled down green dots
+    pctx.fillStyle = dotColor; // Green (#059669)
+    pctx.globalAlpha = 0.90;
+    pctx.beginPath();
+    pctx.arc(3, 9, 1.5, 0, Math.PI * 2);
+    pctx.arc(9, 3, 1.5, 0, Math.PI * 2);
+    pctx.fill();
+
+    return ctx.createPattern(pCanvas, 'repeat') || lineColor;
+  }
+  return lineColor;
+}
+
+// Check if an image or ImageBitmap is fully loaded and ready to draw
+function isImageDrawable(img: any): boolean {
+  if (!img) return false;
+  if (typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap) {
+    return img.width > 0 && img.height > 0;
+  }
+  if (img instanceof HTMLImageElement) {
+    return img.complete && img.naturalWidth > 0;
+  }
+  return true;
+}
+
+// Helper to construct exact tile URL for given coordinates without relying on layer._tileZoom
+function getTileUrlForCoords(layer: any, x: number, y: number, z: number): string {
+  const template = layer?._url || osmTiles;
+  const subdomains = layer?.options?.subdomains || ['a', 'b', 'c'];
+  const s = Array.isArray(subdomains) && subdomains.length > 0
+    ? subdomains[Math.abs(x + y) % subdomains.length]
+    : (typeof subdomains === 'string' && subdomains.length > 0 ? subdomains[0] : 'a');
+  return template
+    .replace('{s}', s)
+    .replace('{z}', String(z))
+    .replace('{x}', String(x))
+    .replace('{y}', String(y))
+    .replace('{r}', '');
+}
+
+// Helper to load tile image reliably with CORS anonymous and multiple fallback strategies
+async function loadTileImage(url: string): Promise<HTMLImageElement | ImageBitmap | null> {
+  // Strategy 1: HTMLImageElement with crossOrigin = 'anonymous'
+  const imgPromise = new Promise<HTMLImageElement | null>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, 6000);
+
+    img.onload = () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(img);
+      }
+    };
+
+    img.onerror = () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(null);
+      }
+    };
+
+    img.src = url;
   });
 
-  const targetElement = mapContainer.value;
-  const isMobile = window.innerWidth <= 768;
-  const originalWidthStyle = targetElement.style.width;
-  const originalHeightStyle = targetElement.style.height;
+  const resultImg = await imgPromise;
+  if (resultImg && isImageDrawable(resultImg)) {
+    return resultImg;
+  }
 
+  // Strategy 2: fetch with CORS -> Blob -> ImageBitmap or Object URL
   try {
-    // On mobile devices, temporarily use desktop resolution for capturing full map
-    if (isMobile) {
+    const response = await fetch(url, { mode: 'cors' });
+    if (response.ok) {
+      const blob = await response.blob();
+      if (typeof createImageBitmap === 'function') {
+        return await createImageBitmap(blob);
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      return await new Promise<HTMLImageElement | null>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = objectUrl;
+      });
+    }
+  } catch (e) {
+    console.warn('[BigImage] Tile fetch fallback failed for:', url, e);
+  }
+
+  return null;
+}
+
+// Custom Leaflet.BigImage subclass enhanced with MultiPolygon support & colorblind pattern rendering
+class CustomBigImageControl extends BigImageControl {
+  constructor(options?: BigImageControlOptions) {
+    super({
+      position: 'topright',
+      title: 'Export Map as Image',
+      downloadTitle: 'Download JPEG',
+      exportFormat: 'jpeg',
+      maxScale: 3,
+      minScale: 1,
+      ...options
+    });
+  }
+
+  // Override parameter panel creation to fix Leaflet.BigImage webp selection bug
+  _buildParametersPanel() {
+    super._buildParametersPanel();
+    if ((this as any)._formatSelect) {
+      (this as any)._formatSelect.value = 'jpeg';
+    }
+  }
+
+  // Handle mobile resolution scaling if user clicks download directly on BigImage panel
+  async _handleDownload() {
+    const isMobile = window.innerWidth <= 768;
+    const targetElement = (this as any)._map?.getContainer();
+    const originalWidthStyle = targetElement?.style.width || '';
+    const originalHeightStyle = targetElement?.style.height || '';
+
+    if (isMobile && targetElement) {
       targetElement.style.width = '1200px';
       targetElement.style.height = '650px';
-      mapObject.value.invalidateSize({ animate: false });
+      (this as any)._map?.invalidateSize({ animate: false });
     }
 
-    // 1. Zoom to the lowest zoom level covering the entire world map
-    const lowestZoom = mapObject.value.getMinZoom();
-    mapObject.value.setView([20, 0], lowestZoom, { animate: false });
-    mapObject.value.fitBounds([[-60, -180], [85, 180]], {
-      padding: [0, 0],
-      animate: false
+    try {
+      await super._handleDownload();
+    } finally {
+      if (isMobile && targetElement) {
+        targetElement.style.width = originalWidthStyle;
+        targetElement.style.height = originalHeightStyle;
+        (this as any)._map?.invalidateSize({ animate: false });
+      }
+    }
+  }
+
+
+  // Extract all rings across single or multi-part polygons
+  _processPath(layer: any) {
+    if (layer._mRadius || !layer._latlngs) return;
+
+    const exportZoom = (this as any).zoom || 2;
+    const rawLatLngs = layer.getLatLngs ? layer.getLatLngs() : layer._latlngs;
+    const allRings = extractRings(rawLatLngs);
+
+    const ringsParts: Point[][] = [];
+    let hasVisiblePoints = false;
+
+    allRings.forEach(ring => {
+      const ringParts: Point[] = [];
+      ring.forEach(latLng => {
+        // Project at the exact zoom level (exportZoom = 2) matching tiles
+        const pt = (this as any)._map.project(latLng, exportZoom);
+        const pixelPoint = new Point(
+          pt.x - (this as any).bounds.min.x,
+          pt.y - (this as any).bounds.min.y
+        );
+        ringParts.push(pixelPoint);
+        if (pixelPoint.x >= 0 && pixelPoint.y >= 0 && pixelPoint.x <= 1024 && pixelPoint.y <= 768) {
+          hasVisiblePoints = true;
+        }
+      });
+      if (ringParts.length > 0) {
+        ringsParts.push(ringParts);
+      }
     });
 
-    // Wait for all Leaflet tile images to finish loading at lowest zoom
-    await new Promise(resolve => {
-      let attempts = 0;
-      const checkTiles = () => {
-        const tiles = Array.from(targetElement.querySelectorAll('.leaflet-tile-pane img.leaflet-tile')) as HTMLImageElement[];
-        if (tiles.length > 0 && tiles.every(img => img.complete)) {
-          resolve(true);
-        } else if (attempts >= 25) {
-          resolve(false);
-        } else {
-          attempts++;
-          setTimeout(checkTiles, 100);
-        }
+    if (hasVisiblePoints && ringsParts.length > 0) {
+      (this as any).paths[layer._leaflet_id] = {
+        ringsParts,
+        closed: layer.options.fill,
+        options: layer.options
       };
-      setTimeout(checkTiles, 150);
+    }
+  }
+
+  // Draw all polygon rings cleanly
+  _drawPath(pathData: any) {
+    const { ringsParts, parts, closed, options } = pathData;
+    const ctx = (this as any).ctx as CanvasRenderingContext2D;
+    const rings: Point[][] = ringsParts || (parts ? [parts] : []);
+
+    ctx.beginPath();
+    rings.forEach(ring => {
+      ring.forEach((point, index) => {
+        ctx[index === 0 ? 'moveTo' : 'lineTo'](point.x, point.y);
+      });
+      if (closed) ctx.closePath();
     });
-    
-    // 2. Hide all buttons, panes, controls, floating tabs, sidebars, and popups during capture
-    const rawDataUrl = await toJpeg(targetElement, {
-      quality: 1,
-      pixelRatio: 1,
-      cacheBust: false,
-      fontEmbedCSS: '',
-      backgroundColor: '#ffffff',
-      imagePlaceholder: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORCYII=',
-      filter: (node: HTMLElement) => {
-        if (node.classList) {
-          // Filter out UI controls (zoom buttons, attribution, tab pill nav, sidebar, popups)
-          if (
-            node.classList.contains('leaflet-control-container') ||
-            node.classList.contains('leaflet-control') ||
-            node.classList.contains('leaflet-popup-pane') ||
-            node.classList.contains('leaflet-popup') ||
-            node.classList.contains('floating-tabs-nav') ||
-            node.classList.contains('sidebar') ||
-            node.classList.contains('mobile-drawer-handle')
-          ) {
-            return false;
+
+    this._applyPathStyle(options);
+  }
+
+  // Apply fill patterns & stroke to Canvas 2D without corrupting canvas or obscuring tiles
+  _applyPathStyle(options: any) {
+    const ctx = (this as any).ctx as CanvasRenderingContext2D;
+
+    if (options.fill) {
+      ctx.globalAlpha = options.fillOpacity ?? 0.85;
+      let fillStyle = options.fillColor || options.color || '#3388ff';
+
+      if (typeof fillStyle === 'string' && fillStyle.startsWith('url(')) {
+        if (fillStyle.includes('stripes')) {
+          fillStyle = getCanvasPattern(ctx, 'stripes', '#ea580c');
+        } else if (fillStyle.includes('dots')) {
+          fillStyle = getCanvasPattern(ctx, 'dots', '#ea580c', '#059669');
+        } else if (fillStyle.includes('both')) {
+          // Combined: Orange lines + Green dots
+          fillStyle = getCanvasPattern(ctx, 'both', '#ea580c', '#059669');
+        } else {
+          fillStyle = options.color || '#ea580c';
+        }
+        ctx.globalAlpha = 0.92;
+      }
+
+      ctx.fillStyle = fillStyle;
+      ctx.fill(options.fillRule || 'evenodd');
+    }
+
+    if (options.stroke !== false && (options.weight ?? 3) !== 0) {
+      if (ctx.setLineDash) {
+        ctx.setLineDash(options.dashArray || []);
+      }
+      ctx.globalAlpha = options.opacity ?? 1;
+      ctx.lineWidth = options.weight ?? 3;
+      ctx.strokeStyle = options.color || '#3388ff';
+      ctx.lineCap = options.lineCap || 'round';
+      ctx.lineJoin = options.lineJoin || 'round';
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  // Robust layer processor ensuring TileLayer, Markers, Paths, and Circles are properly collected
+  async _processLayers() {
+    const layerPromises: Promise<void>[] = [];
+    let tileLayerFound = false;
+
+    (this as any)._map.eachLayer((layer: any) => {
+      // Check if this layer is a tile layer
+      if (layer instanceof TileLayer || layer._url || typeof layer.getTileUrl === 'function') {
+        tileLayerFound = true;
+        layerPromises.push(this._processTileLayer(layer));
+      } else if (layer instanceof Marker || layer._icon) {
+        layerPromises.push((this as any)._processMarker(layer));
+      } else if (layer instanceof Circle || (layer._radius && !layer._latlngs)) {
+        (this as any)._processCircle(layer);
+      } else if (layer instanceof Path || layer._latlngs) {
+        this._processPath(layer);
+      }
+    });
+
+    // Fallback: If no tile layer was found in eachLayer, explicitly process currentTileLayer or default OSM
+    if (!tileLayerFound) {
+      const fallbackLayer = currentTileLayer.value || {
+        _leaflet_id: 'default-osm',
+        _url: osmTiles,
+        options: { opacity: 1 }
+      };
+      layerPromises.push(this._processTileLayer(fallbackLayer));
+    }
+
+    await Promise.allSettled(layerPromises);
+  }
+
+  // Load all 12 global world tiles at zoom 2 covering -180° to +180° and +85° to -64°
+  async _processTileLayer(layer: any) {
+    const layerId = layer._leaflet_id || 'osm-base-layer';
+    (this as any).tilesImgs[layerId] = {};
+    const tileSize = 256;
+    const zoom = 2;
+
+    const tilePromises: Promise<void>[] = [];
+
+    // 4 columns (X: 0..3), 3 rows (Y: 0..2) = 1024x768 pixels covering all inhabited continents
+    for (let j = 0; j < 3; j++) {
+      for (let i = 0; i < 4; i++) {
+        const tilePos = new Point(i * tileSize, j * tileSize);
+        tilePromises.push(this._loadDirectTile(layer, layerId, i, j, zoom, tilePos, tileSize));
+      }
+    }
+
+    await Promise.allSettled(tilePromises);
+  }
+
+  // Load tile with CORS anonymous and multiple fallback strategies
+  async _loadDirectTile(layer: any, layerId: string | number, x: number, y: number, z: number, tilePos: Point, tileSize: number): Promise<void> {
+    const imgKey = `${tilePos.x}:${tilePos.y}`;
+    const url = getTileUrlForCoords(layer, x, y, z);
+
+    const img = await loadTileImage(url);
+    if (img) {
+      if (!(this as any).tilesImgs[layerId]) {
+        (this as any).tilesImgs[layerId] = {};
+      }
+      (this as any).tilesImgs[layerId][imgKey] = {
+        img,
+        x: tilePos.x,
+        y: tilePos.y,
+        opacity: layer?.options?.opacity ?? 1,
+        tileSize
+      };
+    } else {
+      console.warn(`[BigImage] Failed to load tile at (${x}, ${y}, z=${z}) from ${url}`);
+    }
+  }
+
+  // Render tiles safely onto the canvas
+  _renderTiles() {
+    const ctx = (this as any).ctx as CanvasRenderingContext2D;
+    const tilesImgs = (this as any).tilesImgs;
+    if (!tilesImgs) return;
+
+    Object.values(tilesImgs).forEach((layerTiles: any) => {
+      if (!layerTiles) return;
+      Object.values(layerTiles).forEach((tile: any) => {
+        if (tile && isImageDrawable(tile.img)) {
+          ctx.globalAlpha = tile.opacity ?? 1;
+          try {
+            ctx.drawImage(tile.img, tile.x, tile.y, tile.tileSize, tile.tileSize);
+          } catch (e) {
+            console.warn('[BigImage] Skipping unrenderable tile:', e);
           }
         }
-        return true;
-      }
-    });
-
-    // Dynamically crop out outer white margins/pillars to strictly match active map tile bounds
-    let finalDataUrl = rawDataUrl;
-    const tileImgs = Array.from(targetElement.querySelectorAll('.leaflet-tile-pane img.leaflet-tile')).filter((node) => {
-      const img = node as HTMLImageElement;
-      if (!img.complete || img.naturalWidth === 0) return false;
-      const style = window.getComputedStyle(img);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) return false;
-      if (img.parentElement) {
-        const pStyle = window.getComputedStyle(img.parentElement);
-        if (pStyle.display === 'none' || pStyle.visibility === 'hidden' || parseFloat(pStyle.opacity || '1') === 0) return false;
-      }
-      return true;
-    }) as HTMLImageElement[];
-
-    if (tileImgs.length > 0) {
-      const containerRect = targetElement.getBoundingClientRect();
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      tileImgs.forEach(img => {
-        const rect = img.getBoundingClientRect();
-        if (rect.left < minX) minX = rect.left;
-        if (rect.top < minY) minY = rect.top;
-        if (rect.right > maxX) maxX = rect.right;
-        if (rect.bottom > maxY) maxY = rect.bottom;
       });
+    });
+    ctx.globalAlpha = 1;
+  }
 
-      const cropX = Math.max(0, Math.floor(minX - containerRect.left));
-      const cropY = Math.max(0, Math.floor(minY - containerRect.top));
-      const cropWidth = Math.min(containerRect.width - cropX, Math.ceil(maxX - minX));
-      const cropHeight = Math.min(containerRect.height - cropY, Math.ceil(maxY - minY));
+  async _renderToCanvas() {
+    const ctx = (this as any).ctx as CanvasRenderingContext2D;
+    // 1. Natural ocean blue background in case of sub-pixel edges
+    ctx.fillStyle = '#aad3df';
+    ctx.fillRect(0, 0, 1024, 768);
 
-      if (cropWidth > 50 && cropHeight > 50) {
-        const img = new Image();
-        img.src = rawDataUrl;
-        await new Promise(resolve => { img.onload = resolve; });
+    // 2. Base OpenStreetMap tiles (terrain, landmasses, country borders, labels)
+    this._renderTiles();
 
-        const canvas = document.createElement('canvas');
-        canvas.width = cropWidth;
-        canvas.height = cropHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-          finalDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        }
-      }
+    // 3. Trade partner polygons & pattern fills
+    this._renderPaths();
+
+    // 4. Markers and circles
+    (this as any)._renderMarkers?.();
+    (this as any)._renderCircles?.();
+
+    // 5. Draw trade pattern legend onto exported canvas
+    this._renderLegend(ctx);
+  }
+
+  // Draw clean trade pattern legend onto canvas export
+  _renderLegend(ctx: CanvasRenderingContext2D) {
+    const boxX = 20;
+    const boxY = 560;
+    const boxW = 230;
+    const boxH = 188;
+    const r = 8;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.lineWidth = 1;
+
+    ctx.beginPath();
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(boxX, boxY, boxW, boxH, r);
+    } else {
+      ctx.rect(boxX, boxY, boxW, boxH);
     }
+    ctx.fill();
+    ctx.stroke();
 
-    const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
-    const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}.jpg`;
-    
-    const link = document.createElement('a');
-    link.download = fileName;
-    link.href = finalDataUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  } catch (err) {
-    console.error('Failed to capture screenshot:', err);
-  } finally {
-    // Restore original SVG pattern transforms
-    patternElements.forEach(p => {
-      const orig = originalTransforms.get(p);
-      if (orig !== null && orig !== undefined) {
-        p.setAttribute('patternTransform', orig);
-      } else {
-        p.removeAttribute('patternTransform');
+    // Header Title
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+    ctx.fillText('Trade Pattern Legend', boxX + 12, boxY + 22);
+
+    const items = [
+      {
+        type: 'stripes',
+        label: 'Energy Sources (Imports)',
+        sub: 'Orange Diagonal Lines',
+        stroke: '#ea580c'
+      },
+      {
+        type: 'dots',
+        label: 'Energy Uses (Exports)',
+        sub: 'Green Dots',
+        stroke: '#059669'
+      },
+      {
+        type: 'both',
+        label: 'Both (Import & Export)',
+        sub: 'Orange Lines + Green Dots',
+        stroke: '#059669'
+      },
+      {
+        type: 'cali',
+        label: 'California',
+        sub: 'Main Trade Hub',
+        fill: '#ca8a04',
+        stroke: '#854d0e'
       }
+    ];
+
+    let itemY = boxY + 36;
+    items.forEach(item => {
+      const swX = boxX + 12;
+      const swY = itemY;
+      const swSize = 22;
+
+      ctx.save();
+      if (item.type === 'cali') {
+        ctx.fillStyle = item.fill!;
+        ctx.fillRect(swX, swY, swSize, swSize);
+      } else {
+        const pat = getCanvasPattern(ctx, item.type as any, '#ea580c', '#059669');
+        ctx.fillStyle = pat;
+        ctx.fillRect(swX, swY, swSize, swSize);
+      }
+      ctx.strokeStyle = item.stroke;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(swX, swY, swSize, swSize);
+      ctx.restore();
+
+      ctx.fillStyle = '#1e293b';
+      ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+      ctx.fillText(item.label, swX + swSize + 10, swY + 11);
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '10px system-ui, -apple-system, sans-serif';
+      ctx.fillText(item.sub, swX + swSize + 10, swY + 21);
+
+      itemY += 36;
     });
 
-    // Restore original container element style & camera position
-    if (isMobile && targetElement) {
-      targetElement.style.width = originalWidthStyle;
-      targetElement.style.height = originalHeightStyle;
+    ctx.restore();
+  }
+
+  // Await blob generation and download completion before resolving
+  _downloadCanvas(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      // Strictly enforce jpeg export format
+      const selectedFormat = (this as any)._formatSelect?.value?.toLowerCase();
+      const format = selectedFormat === 'png' ? 'png' : 'jpeg';
+      const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
+      const quality = 0.95;
+
+      (this as any).canvas.toBlob((blob: Blob | null) => {
+        if (!blob) {
+          console.error('Failed to generate image blob');
+          resolve();
+          return;
+        }
+
+        const rawFileName = (this as any).options.fileName || 'Map-Visualization';
+        const sanitized = rawFileName.replace(/\.(jpeg|jpg|png|webp)$/i, '');
+        const ext = format === 'jpeg' ? 'jpeg' : format;
+        const link = document.createElement('a');
+        link.download = `${sanitized}.${ext}`;
+        link.href = URL.createObjectURL(blob);
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        setTimeout(() => {
+          URL.revokeObjectURL(link.href);
+          resolve();
+        }, 100);
+      }, mimeType, quality);
+    });
+  }
+
+  // Promise-based full-world uncropped generation and download
+  async _generateAndDownloadImage(scale: number): Promise<void> {
+    (this as any).tilesImgs = {};
+    (this as any).markers = {};
+    (this as any).paths = {};
+    (this as any).circles = {};
+
+    const exportZoom = 2;
+    (this as any).zoom = exportZoom;
+
+    // Full uncropped world bounds:
+    // 1024x768 covers -180° to +180° longitude and +85° to -64° latitude
+    const baseWidth = 1024;
+    const baseHeight = 768;
+    const actualScale = Math.max(1, scale || 1);
+
+    (this as any).bounds = new Bounds(
+      new Point(0, 0),
+      new Point(baseWidth, baseHeight)
+    );
+
+    const canvas = document.createElement('canvas');
+    canvas.width = baseWidth * actualScale;
+    canvas.height = baseHeight * actualScale;
+    (this as any).canvas = canvas;
+    const ctx = canvas.getContext('2d');
+    (this as any).ctx = ctx;
+
+    if (actualScale > 1 && ctx) {
+      ctx.scale(actualScale, actualScale);
     }
-    if (mapObject.value) {
-      mapObject.value.invalidateSize({ animate: false });
-      if (originalCenter && originalZoom !== undefined) {
-        mapObject.value.setView(originalCenter, originalZoom, { animate: false });
-      }
+
+    await (this as any)._processLayers();
+    await this._renderToCanvas();
+
+    await this._downloadCanvas();
+  }
+}
+
+const isCapturing = ref(false);
+const isLegendCollapsed = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+const bigImageControlInstance = shallowRef<CustomBigImageControl | null>(null);
+
+const captureScreenshot = async () => {
+  if (isCapturing.value || !bigImageControlInstance.value) return;
+  isCapturing.value = true;
+
+  try {
+    const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
+    const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}`;
+    bigImageControlInstance.value.options.fileName = fileName;
+    bigImageControlInstance.value.options.exportFormat = 'jpeg';
+    if ((bigImageControlInstance.value as any)._formatSelect) {
+      (bigImageControlInstance.value as any)._formatSelect.value = 'jpeg';
     }
+
+    // Export full world JPEG directly using Leaflet.BigImage plugin
+    await bigImageControlInstance.value._generateAndDownloadImage(1);
+  } catch (err) {
+    console.error('Failed to capture screenshot via Leaflet.BigImage:', err);
+  } finally {
     isCapturing.value = false;
   }
 };
@@ -744,7 +1209,7 @@ const updateMapLayers = () => {
     } else if (isImport) {
       const impLayer = geoJSON(feature, {
         style: {
-          color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
+          color: themeMode.value === 'dark' ? '#f97316' : '#ea580c',
           weight: 1.5,
           fillColor: themeMode.value === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)',
           fillOpacity: 1.0,
@@ -757,12 +1222,12 @@ const updateMapLayers = () => {
         className: 'custom-leaflet-popup',
         offset: [0, -10]
       });
-      setupHover(impLayer, themeMode.value === 'dark' ? '#fbbf24' : '#b45309', themeMode.value === 'dark' ? '#f59e0b' : '#d97706');
+      setupHover(impLayer, themeMode.value === 'dark' ? '#fb923c' : '#c2410c', themeMode.value === 'dark' ? '#f97316' : '#ea580c');
       newLayers.push(impLayer);
     } else if (isExport) {
       const expLayer = geoJSON(feature, {
         style: {
-          color: themeMode.value === 'dark' ? '#3b82f6' : '#2563eb',
+          color: themeMode.value === 'dark' ? '#10b981' : '#059669',
           weight: 1.5,
           fillColor: themeMode.value === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)',
           fillOpacity: 1.0,
@@ -775,7 +1240,7 @@ const updateMapLayers = () => {
         className: 'custom-leaflet-popup',
         offset: [0, -10]
       });
-      setupHover(expLayer, themeMode.value === 'dark' ? '#60a5fa' : '#1d4ed8', themeMode.value === 'dark' ? '#3b82f6' : '#2563eb');
+      setupHover(expLayer, themeMode.value === 'dark' ? '#34d399' : '#047857', themeMode.value === 'dark' ? '#10b981' : '#059669');
       newLayers.push(expLayer);
     }
   });
@@ -994,8 +1459,28 @@ onMounted(() => {
     })
     .catch(err => console.error('Failed to load GeoJSON databases:', err));
 
+  // Add Leaflet.BigImage export control to the map
+  const bigImage = new CustomBigImageControl({
+    position: 'topright',
+    title: 'Export Map as Image',
+    downloadTitle: 'Download JPEG',
+    exportFormat: 'jpeg',
+    fileName: `${props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization'}-${activeYear.value || 'Map'}`,
+    maxScale: 3,
+    minScale: 1
+  });
+  bigImageControlInstance.value = bigImage;
+  mapInst.addControl(bigImage);
+
   window.addEventListener('resize', handleResize);
 });
+
+watch([() => props.title, activeYear], () => {
+  if (bigImageControlInstance.value) {
+    const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
+    bigImageControlInstance.value.options.fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}`;
+  }
+}, { immediate: true });
 
 const handleResize = () => {
   if (mapObject.value) {
@@ -1006,6 +1491,10 @@ const handleResize = () => {
 onBeforeUnmount(() => {
   stopPlay();
   window.removeEventListener('resize', handleResize);
+  if (bigImageControlInstance.value && mapObject.value) {
+    mapObject.value.removeControl(bigImageControlInstance.value);
+    bigImageControlInstance.value = null;
+  }
   if (mapObject.value) {
     mapObject.value.remove();
     mapObject.value = null;
@@ -1124,46 +1613,113 @@ onBeforeUnmount(() => {
           🏭 Energy Uses
         </button>
       </nav>
+
+      <!-- Mobile Backdrop when legend is expanded on mobile -->
+      <div v-if="!isLegendCollapsed" class="mobile-legend-backdrop" @click="isLegendCollapsed = true"></div>
+
+      <!-- Floating Map Legend Card -->
+      <div class="map-legend-card" :class="{ 'collapsed': isLegendCollapsed }">
+        <div class="legend-header" @click="isLegendCollapsed = !isLegendCollapsed">
+          <div class="legend-title-group">
+            <span class="legend-icon">🗺️</span>
+            <span class="legend-title">Trade Legend</span>
+          </div>
+          <button class="legend-toggle-btn" type="button" :title="isLegendCollapsed ? 'Expand Legend' : 'Collapse Legend'">
+            {{ isLegendCollapsed ? '▼' : '▲' }}
+          </button>
+        </div>
+
+        <div v-show="!isLegendCollapsed" class="legend-body">
+          <!-- Import / Energy Sources -->
+          <div class="legend-item">
+            <svg class="legend-swatch" width="22" height="22">
+              <rect width="22" height="22" rx="4"
+                :fill="themeMode === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)'"
+                :stroke="themeMode === 'dark' ? '#f97316' : '#ea580c'" stroke-width="1.5" />
+            </svg>
+            <div class="legend-text">
+              <span class="legend-label">Energy Sources (Imports)</span>
+              <span class="legend-sub">Orange Diagonal Lines</span>
+            </div>
+          </div>
+
+          <!-- Export / Energy Uses -->
+          <div class="legend-item">
+            <svg class="legend-swatch" width="22" height="22">
+              <rect width="22" height="22" rx="4"
+                :fill="themeMode === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)'"
+                :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
+            </svg>
+            <div class="legend-text">
+              <span class="legend-label">Energy Uses (Exports)</span>
+              <span class="legend-sub">Green Dots</span>
+            </div>
+          </div>
+
+          <!-- Both Import & Export -->
+          <div class="legend-item">
+            <svg class="legend-swatch" width="22" height="22">
+              <rect width="22" height="22" rx="4"
+                :fill="themeMode === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)'"
+                :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
+            </svg>
+            <div class="legend-text">
+              <span class="legend-label">Both (Import & Export)</span>
+              <span class="legend-sub">Orange Lines + Green Dots</span>
+            </div>
+          </div>
+
+          <!-- California Anchor -->
+          <div class="legend-item">
+            <div class="legend-swatch solid-cali-swatch"></div>
+            <div class="legend-text">
+              <span class="legend-label">California</span>
+              <span class="legend-sub">Main Trade Hub</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div ref="mapContainer" class="map-element">
         <!-- Hidden SVG pattern definitions inside map container for screenshot capture compatibility -->
         <svg width="0" height="0" style="position: absolute; pointer-events: none; z-index: -1;">
           <defs>
-            <!-- Dark Mode Diagonal Stripe Pattern (Import) -->
-            <pattern id="colorblind-stripes" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(245, 158, 11, 0.35)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
+            <!-- Dark Mode Diagonal Stripe Pattern (Import - Orange Lines) -->
+            <pattern id="colorblind-stripes" width="9" height="9" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="9" height="9" fill="rgba(249, 115, 22, 0.20)" />
+              <line x1="0" y1="0" x2="0" y2="9" stroke="#f97316" stroke-width="1.6" />
             </pattern>
 
-            <!-- Light Mode Diagonal Stripe Pattern (Import) -->
-            <pattern id="colorblind-stripes-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(217, 119, 6, 0.32)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
+            <!-- Light Mode Diagonal Stripe Pattern (Import - Orange Lines) -->
+            <pattern id="colorblind-stripes-light" width="9" height="9" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="9" height="9" fill="rgba(234, 88, 12, 0.16)" />
+              <line x1="0" y1="0" x2="0" y2="9" stroke="#ea580c" stroke-width="1.6" />
             </pattern>
 
-            <!-- Dark Mode Dot Pattern (Export) -->
-            <pattern id="colorblind-dots" width="12" height="12" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(59, 130, 246, 0.35)" />
-              <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
+            <!-- Dark Mode Dot Pattern (Export - Green Dots) -->
+            <pattern id="colorblind-dots" width="9" height="9" patternUnits="userSpaceOnUse">
+              <rect width="9" height="9" fill="rgba(16, 185, 129, 0.20)" />
+              <circle cx="4.5" cy="4.5" r="1.5" fill="#10b981" />
             </pattern>
 
-            <!-- Light Mode Dot Pattern (Export) -->
-            <pattern id="colorblind-dots-light" width="12" height="12" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(37, 99, 235, 0.32)" />
-              <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
+            <!-- Light Mode Dot Pattern (Export - Green Dots) -->
+            <pattern id="colorblind-dots-light" width="9" height="9" patternUnits="userSpaceOnUse">
+              <rect width="9" height="9" fill="rgba(5, 150, 105, 0.16)" />
+              <circle cx="4.5" cy="4.5" r="1.5" fill="#059669" />
             </pattern>
 
-            <!-- Dark Mode Both Pattern (Import + Export) -->
-            <pattern id="colorblind-both" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.35)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
-              <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
+            <!-- Dark Mode Both Pattern (Import + Export: Orange Lines + Green Dots) -->
+            <pattern id="colorblind-both" width="9" height="9" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="9" height="9" fill="rgba(249, 115, 22, 0.08)" />
+              <line x1="0" y1="0" x2="0" y2="9" stroke="#f97316" stroke-width="1.6" />
+              <circle cx="4.5" cy="4.5" r="1.5" fill="#10b981" />
             </pattern>
 
-            <!-- Light Mode Both Pattern (Import + Export) -->
-            <pattern id="colorblind-both-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.32)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
-              <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
+            <!-- Light Mode Both Pattern (Import + Export: Orange Lines + Green Dots) -->
+            <pattern id="colorblind-both-light" width="9" height="9" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+              <rect width="9" height="9" fill="rgba(234, 88, 12, 0.07)" />
+              <line x1="0" y1="0" x2="0" y2="9" stroke="#ea580c" stroke-width="1.6" />
+              <circle cx="4.5" cy="4.5" r="1.5" fill="#059669" />
             </pattern>
           </defs>
         </svg>
@@ -1281,20 +1837,220 @@ onBeforeUnmount(() => {
 }
 
 .import-badge {
-  background: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(234, 88, 12, 0.15);
+  color: #ea580c;
+  border: 1px solid rgba(234, 88, 12, 0.3);
 }
 
 .export-badge {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
-.both-badge {
   background: rgba(16, 185, 129, 0.15);
   color: #10b981;
   border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.both-badge {
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.18) 0%, rgba(16, 185, 129, 0.18) 100%);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+/* Floating Map Legend Card Styles */
+.map-legend-card {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px) saturate(150%);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  z-index: 1000;
+  width: 236px;
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+}
+
+.dark .map-legend-card {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+
+.legend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  transition: background 0.2s ease;
+}
+
+.legend-header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.dark .legend-header {
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.dark .legend-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.legend-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-icon {
+  font-size: 13px;
+}
+
+.legend-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #0f172a;
+}
+
+.dark .legend-title {
+  color: #f8fafc;
+}
+
+.legend-toggle-btn {
+  background: transparent;
+  border: none;
+  font-size: 10px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.legend-body {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.legend-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.solid-cali-swatch {
+  background: #ca8a04;
+  border: 1.5px solid #854d0e;
+}
+
+.legend-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.legend-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.dark .legend-label {
+  color: #f1f5f9;
+}
+
+.legend-sub {
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.dark .legend-sub {
+  color: #94a3b8;
+}
+
+.mobile-legend-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-legend-backdrop {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 2150;
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(2px);
+  }
+
+  /* Fixed to top-left on mobile, positioned neatly below the Leaflet zoom (+/-) buttons */
+  .map-legend-card {
+    position: fixed;
+    top: 94px;
+    bottom: auto;
+    left: 12px;
+    width: auto;
+    min-width: 108px;
+    max-width: 260px;
+    z-index: 2200; /* Above bottom sheet drawer (z: 2000) and backdrop (z: 2150) */
+    border-radius: 20px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+  }
+
+  .map-legend-card.collapsed .legend-header {
+    padding: 6px 12px;
+    border-bottom: none;
+    background: transparent;
+  }
+
+  .map-legend-card.collapsed .legend-title {
+    font-size: 11px;
+  }
+
+  .map-legend-card:not(.collapsed) {
+    border-radius: 14px;
+    width: 240px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  }
+
+  .map-legend-card:not(.collapsed) .legend-header {
+    padding: 8px 12px;
+  }
+
+  .map-legend-card:not(.collapsed) .legend-body {
+    padding: 8px 12px 10px 12px;
+    gap: 6px;
+  }
+
+  .map-legend-card:not(.collapsed) .legend-swatch {
+    width: 18px;
+    height: 18px;
+  }
+
+  .map-legend-card:not(.collapsed) .legend-label {
+    font-size: 10.5px;
+  }
+
+  .map-legend-card:not(.collapsed) .legend-sub {
+    font-size: 9.5px;
+  }
 }
 </style>
