@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * CaliforniaTrades.vue - Interactive Map Visualisation Component
+ * CaliforniaTrades.vue - Interactive Map Visualisation Component (MapLibre GL JS)
  * 
  * ARCHITECTURE & SYSTEM OVERVIEW:
  * 
@@ -14,8 +14,8 @@
  * 
  * 2. GeoJSON Feature Resolution & Geopolitical Alias System (`getGeoJsonFeature`):
  *    - Downloads two GeoJSON spatial feature collections on initialization:
- *      * World Countries GeoJSON (`custom.geo.json`): Global country boundaries.
- *      * US States GeoJSON (`us-states.json`): Detailed US state boundaries.
+ *      * World Countries GeoJSON (`countries.geojson`): Global country boundaries.
+ *      * US States GeoJSON (`us-states.geojson`): Detailed US state boundaries.
  *    - Uses a dictionary (`tradePartnerToGeoJson`) and dynamic fallback heuristics to match spreadsheet strings:
  *      * Differentiates US states (e.g., "Hawaii", "United States, Massachussetts", "United States Territory - Oregon") from sovereign countries.
  *      * Resolves historical/colonial port names, archaic spellings, and territory designations (e.g., "China, Canton" -> China, "India, Calcutta" -> India, "Burma" -> Myanmar, "Great Britain" -> United Kingdom).
@@ -24,25 +24,29 @@
  * 3. Map Representation & Import/Export Visual Marking (`updateMapLayers`):
  *    - Groups trade partners by resolved GeoJSON shape to avoid duplicate stacked polygons.
  *    - Applies colorblind-accessible SVG pattern fills and distinct border colors based on trade relationship:
- *      * Import Partner Only: Amber/Gold outline (#d97706) with SVG diagonal stripes fill (`url(#colorblind-stripes)`).
- *      * Export Partner Only: Blue outline (#2563eb) with SVG dots pattern fill (`url(#colorblind-dots)`).
- *      * Import & Export Partner (Both): Emerald green outline (#059669) with combined SVG stripes+dots fill (`url(#colorblind-both)`).
+ *      * Import Partner Only: Amber/Gold outline (#d97706) with diagonal stripes fill pattern.
+ *      * Export Partner Only: Blue outline (#2563eb) with dots pattern fill.
+ *      * Import & Export Partner (Both): Emerald green outline (#059669) with combined stripes+dots fill.
  *      * Anchor Home Region (California): Solid dark yellow fill (#ca8a04, opacity 0.85) marking California as the main trade hub.
- *    - Provides interactive mouseover hover glows, dynamic Leaflet popup cards, and fly-to focus animations.
+ *    - Provides interactive mouseover hover glows, dynamic MapLibre popup cards, and fly-to focus animations.
  * 
  * 4. Full World Map JPEG Screenshot Export Pipeline (`captureScreenshot`):
- *    - Minimum Zoom Camera Set: Sets camera view to full-world zoom (`map.getMinZoom()`) covering all continents.
+ *    - Minimum Zoom Camera Set: Sets camera view to full-world zoom covering all continents.
  *    - Mobile Resolution Scaling: Temporarily scales container to desktop dimensions (1200x650px) on mobile viewports.
- *    - SVG Pattern Transform Correction: Applies `patternTransform="scale(0.5)"` to SVG pattern elements during capture so patterns scale correctly at min zoom.
- *    - UI Element Filtering: Filters out sidebar drawers, tab buttons, controls, and popups prior to capturing DOM screenshot with `html-to-image`.
+ *    - Pattern Transform Correction: Applies scaled pattern fills during capture so patterns scale correctly at min zoom.
+ *    - UI Element Filtering: Filters out sidebar drawers, tab buttons, controls, and popups prior to capturing screenshot.
  *    - Clean Restoration: Guarantees original camera center, zoom, container dimensions, and pattern transforms are restored in `finally`.
  */
 
 import { ref, onMounted, shallowRef, computed, watch, onBeforeUnmount } from 'vue';
-import { map, tileLayer, geoJSON, featureGroup, type Map as LeafletMap, type Layer } from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import * as maplibregl from 'maplibre-gl';
+import { type Map as MapLibreMap, type Popup } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import * as XLSX from 'xlsx';
 import { toJpeg } from 'html-to-image';
+
+// Configure MapLibre Web Worker URL to prevent non-JS MIME type errors on bundled/SPA hosts
+maplibregl.config.WORKER_URL = 'https://unpkg.com/maplibre-gl@6.9.0/dist/maplibre-gl-worker.mjs';
 
 const props = defineProps<{
   dataSource: string;
@@ -53,6 +57,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'switchTab', tab: 'sources' | 'uses'): void;
 }>();
+
 // Excel data structure
 class SheetColumnData {
   year: number | undefined;
@@ -85,7 +90,6 @@ const geoCoordinates: Record<string, [number, number]> = {
   'United States, Minnesota': [46.7296, -94.6859],
   'United States, Utah': [39.3210, -111.0937]
 };
-
 
 const worldGeoJson = ref<any>(null);
 const usStatesGeoJson = ref<any>(null);
@@ -153,7 +157,7 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'micronesia (federated states of)': { type: 'country', name: 'Micronesia' },
   'syrian arab republic': { type: 'country', name: 'Syria' },
 
-  // New US State/Territory mappings for energy datasets
+  // US State/Territory mappings for energy datasets
   'united states - massachussetts': { type: 'state', name: 'Massachusetts' },
   'united states - massachusettes': { type: 'state', name: 'Massachusetts' },
   'united states - virigina': { type: 'state', name: 'Virginia' },
@@ -182,7 +186,6 @@ const getGeoJsonFeature = (partnerName: string) => {
     type = mapping.type;
     geoQuery = mapping.name;
   } else {
-    // Default dynamic rules
     let baseName = cleanName;
     if (baseName.includes('(')) {
       baseName = baseName.split('(')[0].trim();
@@ -255,8 +258,9 @@ const getGeoJsonFeature = (partnerName: string) => {
 };
 
 const mapContainer = ref<HTMLDivElement | null>(null);
-const mapObject = shallowRef<LeafletMap | null>(null);
-const currentTileLayer = shallowRef<Layer | null>(null);
+const mapObject = shallowRef<MapLibreMap | null>(null);
+const isMapReady = ref(false);
+let activePopup: Popup | null = null;
 
 const themeMode = ref<'light' | 'dark'>('light');
 const isMobileExpanded = ref(false);
@@ -276,15 +280,12 @@ const isLoading = ref(true);
 const isPlaying = ref(false);
 let playInterval: ReturnType<typeof setInterval> | null = null;
 
-// Use shallowRef to prevent Vue from proxying Leaflet Layer instances
-const mapLayers = shallowRef<Layer[]>([]);
-
 interface TradesData {
   imports: SheetColumnData[];
   exports: SheetColumnData[];
 }
 
-// XLSX Parsing function (loads from the local served public path)
+// XLSX Parsing function (loads from the local served public path or remote URL)
 async function parseSheetColumns(assetPath: string = 'https://raw.githubusercontent.com/Complexity-Group/visualisation-map/main/public/data/data.xlsx'): Promise<TradesData> {
   const response = await fetch(assetPath);
   if (!response.ok) {
@@ -375,24 +376,163 @@ const combinedPartners = computed(() => {
   return list.sort((a, b) => a.name.localeCompare(b.name));
 });
 
+// Helper to generate seamless colorblind pattern textures for MapLibre
+function createPatternImageData(
+  type: 'stripes' | 'dots' | 'both',
+  theme: 'light' | 'dark',
+  isCapture = false
+): ImageData {
+  const scale = isCapture ? 0.5 : 1.0;
+  const size = Math.round(16 * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
 
-const osmTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const bgColors = {
+    stripes: theme === 'dark' ? 'rgba(245, 158, 11, 0.35)' : 'rgba(217, 119, 6, 0.32)',
+    dots: theme === 'dark' ? 'rgba(59, 130, 246, 0.35)' : 'rgba(37, 99, 235, 0.32)',
+    both: theme === 'dark' ? 'rgba(16, 185, 129, 0.35)' : 'rgba(16, 185, 129, 0.32)',
+  };
 
-const setTileLayer = () => {
-  if (!mapObject.value) return;
+  const stripeColor = theme === 'dark' ? '#f59e0b' : '#d97706';
+  const dotColor = theme === 'dark' ? '#3b82f6' : '#2563eb';
 
-  if (currentTileLayer.value) {
-    mapObject.value.removeLayer(currentTileLayer.value);
+  // Fill background
+  ctx.fillStyle = bgColors[type];
+  ctx.fillRect(0, 0, size, size);
+
+  if (type === 'stripes' || type === 'both') {
+    ctx.strokeStyle = stripeColor;
+    ctx.lineWidth = Math.max(1, Math.round(3 * scale));
+    ctx.lineCap = 'square';
+
+    ctx.beginPath();
+    // Seamless wrapping diagonal stripes at 45 degrees
+    ctx.moveTo(-2, -2);
+    ctx.lineTo(size + 2, size + 2);
+
+    ctx.moveTo(-size - 2, -2);
+    ctx.lineTo(2, size + 2);
+
+    ctx.moveTo(-2, -size - 2);
+    ctx.lineTo(size + 2, 2);
+
+    ctx.moveTo(size - 2, -2);
+    ctx.lineTo(size * 2 + 2, size + 2);
+
+    ctx.moveTo(-2, size - 2);
+    ctx.lineTo(size + 2, size * 2 + 2);
+    ctx.stroke();
   }
 
-  const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  if (type === 'dots') {
+    ctx.fillStyle = dotColor;
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, Math.max(1, 2.8 * scale), 0, Math.PI * 2);
+    ctx.fill();
+  } else if (type === 'both') {
+    ctx.fillStyle = dotColor;
+    ctx.beginPath();
+    ctx.arc(size * 0.75, size * 0.25, Math.max(1, 2.2 * scale), 0, Math.PI * 2);
+    ctx.arc(size * 0.25, size * 0.75, Math.max(1, 2.2 * scale), 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  currentTileLayer.value = tileLayer(osmTiles, {
-    maxZoom: 18,
-    attribution,
-    noWrap: true
-  }).addTo(mapObject.value);
-};
+  return ctx.getImageData(0, 0, size, size);
+}
+
+function registerAllPatterns(mapInst: MapLibreMap) {
+  const addPattern = (id: string, imgData: ImageData) => {
+    if (mapInst.hasImage(id)) {
+      mapInst.updateImage(id, imgData);
+    } else {
+      mapInst.addImage(id, imgData);
+    }
+  };
+
+  // Normal patterns (16px)
+  addPattern('colorblind-stripes', createPatternImageData('stripes', 'dark', false));
+  addPattern('colorblind-stripes-light', createPatternImageData('stripes', 'light', false));
+  addPattern('colorblind-dots', createPatternImageData('dots', 'dark', false));
+  addPattern('colorblind-dots-light', createPatternImageData('dots', 'light', false));
+  addPattern('colorblind-both', createPatternImageData('both', 'dark', false));
+  addPattern('colorblind-both-light', createPatternImageData('both', 'light', false));
+
+  // Scaled capture patterns (8px for min zoom world capture)
+  addPattern('colorblind-stripes-capture', createPatternImageData('stripes', 'dark', true));
+  addPattern('colorblind-stripes-capture-light', createPatternImageData('stripes', 'light', true));
+  addPattern('colorblind-dots-capture', createPatternImageData('dots', 'dark', true));
+  addPattern('colorblind-dots-capture-light', createPatternImageData('dots', 'light', true));
+  addPattern('colorblind-both-capture', createPatternImageData('both', 'dark', true));
+  addPattern('colorblind-both-capture-light', createPatternImageData('both', 'light', true));
+}
+
+function setCapturePatterns(isCapture: boolean) {
+  if (!mapObject.value || !isMapReady.value) return;
+  const isDark = themeMode.value === 'dark';
+  const suffix = isCapture ? '-capture' : '';
+  const lightSuffix = isDark ? '' : '-light';
+
+  mapObject.value.setPaintProperty('trades-fill-import', 'fill-pattern', `colorblind-stripes${suffix}${lightSuffix}`);
+  mapObject.value.setPaintProperty('trades-fill-export', 'fill-pattern', `colorblind-dots${suffix}${lightSuffix}`);
+  mapObject.value.setPaintProperty('trades-fill-both', 'fill-pattern', `colorblind-both${suffix}${lightSuffix}`);
+}
+
+// Bounding box helpers for MapLibre GeoJSON coordinates [lng, lat]
+function getFeatureBBox(feature: any): [[number, number], [number, number]] | null {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+
+  function traverse(coords: any) {
+    if (!coords) return;
+    if (typeof coords[0] === 'number') {
+      const lng = coords[0];
+      const lat = coords[1];
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    } else if (Array.isArray(coords)) {
+      coords.forEach(traverse);
+    }
+  }
+
+  if (feature && feature.geometry && feature.geometry.coordinates) {
+    traverse(feature.geometry.coordinates);
+  }
+
+  if (minLng === Infinity || minLat === Infinity) return null;
+  return [[minLng, minLat], [maxLng, maxLat]];
+}
+
+function calculateFeatureCollectionBBox(fc: any): [[number, number], [number, number]] | null {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+
+  function traverse(coords: any) {
+    if (!coords) return;
+    if (typeof coords[0] === 'number') {
+      const lng = coords[0];
+      const lat = coords[1];
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    } else if (Array.isArray(coords)) {
+      coords.forEach(traverse);
+    }
+  }
+
+  if (fc && fc.features) {
+    fc.features.forEach((f: any) => {
+      if (f.geometry && f.geometry.coordinates) {
+        traverse(f.geometry.coordinates);
+      }
+    });
+  }
+
+  if (minLng === Infinity || minLat === Infinity) return null;
+  return [[minLng, minLat], [maxLng, maxLat]];
+}
 
 const isCapturing = ref(false);
 
@@ -404,14 +544,13 @@ const captureScreenshot = async () => {
   const originalCenter = mapObject.value.getCenter();
   const originalZoom = mapObject.value.getZoom();
 
-  // Store original SVG pattern transforms & apply scale(0.5) for fine-grained screenshot patterns
-  const patternElements = mapContainer.value.querySelectorAll('pattern');
-  const originalTransforms = new Map<Element, string | null>();
-  patternElements.forEach(p => {
-    originalTransforms.set(p, p.getAttribute('patternTransform'));
-    const current = p.getAttribute('patternTransform') || '';
-    p.setAttribute('patternTransform', `${current} scale(0.5)`.trim());
-  });
+  if (activePopup) {
+    activePopup.remove();
+    activePopup = null;
+  }
+
+  // Switch pattern textures to scaled-down capture variants
+  setCapturePatterns(true);
 
   const targetElement = mapContainer.value;
   const isMobile = window.innerWidth <= 768;
@@ -423,128 +562,78 @@ const captureScreenshot = async () => {
     if (isMobile) {
       targetElement.style.width = '1200px';
       targetElement.style.height = '650px';
-      mapObject.value.invalidateSize({ animate: false });
+      mapObject.value.resize();
     }
 
     // 1. Zoom to the lowest zoom level covering the entire world map
     const lowestZoom = mapObject.value.getMinZoom();
-    mapObject.value.setView([20, 0], lowestZoom, { animate: false });
-    mapObject.value.fitBounds([[-60, -180], [85, 180]], {
-      padding: [0, 0],
+    mapObject.value.jumpTo({
+      center: [0, 20],
+      zoom: lowestZoom
+    });
+    mapObject.value.fitBounds([[-179.99, -60], [179.99, 85]], {
+      padding: 0,
       animate: false
     });
 
-    // Wait for all Leaflet tile images to finish loading at lowest zoom
+    // Wait for MapLibre tiles and layer rendering to settle
     await new Promise(resolve => {
-      let attempts = 0;
-      const checkTiles = () => {
-        const tiles = Array.from(targetElement.querySelectorAll('.leaflet-tile-pane img.leaflet-tile')) as HTMLImageElement[];
-        if (tiles.length > 0 && tiles.every(img => img.complete)) {
+      let resolved = false;
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
           resolve(true);
-        } else if (attempts >= 25) {
-          resolve(false);
-        } else {
-          attempts++;
-          setTimeout(checkTiles, 100);
         }
       };
-      setTimeout(checkTiles, 150);
+      if (mapObject.value!.areTilesLoaded() && mapObject.value!.loaded()) {
+        setTimeout(done, 250);
+      } else {
+        mapObject.value!.once('idle', done);
+        setTimeout(done, 2000);
+      }
     });
-    
-    // 2. Hide all buttons, panes, controls, floating tabs, sidebars, and popups during capture
-    const rawDataUrl = await toJpeg(targetElement, {
-      quality: 1,
-      pixelRatio: 1,
-      cacheBust: false,
-      fontEmbedCSS: '',
-      backgroundColor: '#ffffff',
-      imagePlaceholder: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORCYII=',
-      filter: (node: HTMLElement) => {
-        if (node.classList) {
-          // Filter out UI controls (zoom buttons, attribution, tab pill nav, sidebar, popups)
-          if (
-            node.classList.contains('leaflet-control-container') ||
-            node.classList.contains('leaflet-control') ||
-            node.classList.contains('leaflet-popup-pane') ||
-            node.classList.contains('leaflet-popup') ||
-            node.classList.contains('floating-tabs-nav') ||
-            node.classList.contains('sidebar') ||
-            node.classList.contains('mobile-drawer-handle')
-          ) {
-            return false;
+
+    // 2. Capture screenshot - MapLibre preserveDrawingBuffer enables direct canvas toDataURL
+    const canvas = mapObject.value.getCanvas();
+    let rawDataUrl: string;
+    try {
+      rawDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    } catch {
+      rawDataUrl = await toJpeg(targetElement, {
+        quality: 1,
+        pixelRatio: 1,
+        cacheBust: false,
+        backgroundColor: '#ffffff',
+        filter: (node: HTMLElement) => {
+          if (node.classList) {
+            if (
+              node.classList.contains('maplibregl-ctrl') ||
+              node.classList.contains('maplibregl-popup') ||
+              node.classList.contains('floating-tabs-nav') ||
+              node.classList.contains('sidebar') ||
+              node.classList.contains('mobile-drawer-handle')
+            ) {
+              return false;
+            }
           }
+          return true;
         }
-        return true;
-      }
-    });
-
-    // Dynamically crop out outer white margins/pillars to strictly match active map tile bounds
-    let finalDataUrl = rawDataUrl;
-    const tileImgs = Array.from(targetElement.querySelectorAll('.leaflet-tile-pane img.leaflet-tile')).filter((node) => {
-      const img = node as HTMLImageElement;
-      if (!img.complete || img.naturalWidth === 0) return false;
-      const style = window.getComputedStyle(img);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) return false;
-      if (img.parentElement) {
-        const pStyle = window.getComputedStyle(img.parentElement);
-        if (pStyle.display === 'none' || pStyle.visibility === 'hidden' || parseFloat(pStyle.opacity || '1') === 0) return false;
-      }
-      return true;
-    }) as HTMLImageElement[];
-
-    if (tileImgs.length > 0) {
-      const containerRect = targetElement.getBoundingClientRect();
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      tileImgs.forEach(img => {
-        const rect = img.getBoundingClientRect();
-        if (rect.left < minX) minX = rect.left;
-        if (rect.top < minY) minY = rect.top;
-        if (rect.right > maxX) maxX = rect.right;
-        if (rect.bottom > maxY) maxY = rect.bottom;
       });
-
-      const cropX = Math.max(0, Math.floor(minX - containerRect.left));
-      const cropY = Math.max(0, Math.floor(minY - containerRect.top));
-      const cropWidth = Math.min(containerRect.width - cropX, Math.ceil(maxX - minX));
-      const cropHeight = Math.min(containerRect.height - cropY, Math.ceil(maxY - minY));
-
-      if (cropWidth > 50 && cropHeight > 50) {
-        const img = new Image();
-        img.src = rawDataUrl;
-        await new Promise(resolve => { img.onload = resolve; });
-
-        const canvas = document.createElement('canvas');
-        canvas.width = cropWidth;
-        canvas.height = cropHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-          finalDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        }
-      }
     }
 
     const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
     const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}.jpg`;
-    
+
     const link = document.createElement('a');
     link.download = fileName;
-    link.href = finalDataUrl;
+    link.href = rawDataUrl;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   } catch (err) {
     console.error('Failed to capture screenshot:', err);
   } finally {
-    // Restore original SVG pattern transforms
-    patternElements.forEach(p => {
-      const orig = originalTransforms.get(p);
-      if (orig !== null && orig !== undefined) {
-        p.setAttribute('patternTransform', orig);
-      } else {
-        p.removeAttribute('patternTransform');
-      }
-    });
+    setCapturePatterns(false);
 
     // Restore original container element style & camera position
     if (isMobile && targetElement) {
@@ -552,16 +641,15 @@ const captureScreenshot = async () => {
       targetElement.style.height = originalHeightStyle;
     }
     if (mapObject.value) {
-      mapObject.value.invalidateSize({ animate: false });
+      mapObject.value.resize();
       if (originalCenter && originalZoom !== undefined) {
-        mapObject.value.setView(originalCenter, originalZoom, { animate: false });
+        mapObject.value.setCenter(originalCenter);
+        mapObject.value.setZoom(originalZoom);
       }
     }
     isCapturing.value = false;
   }
 };
-
-
 
 // Play/Pause timeline animation
 const togglePlay = () => {
@@ -578,7 +666,7 @@ const togglePlay = () => {
       if (selectedYearIndex.value < availableYears.value.length - 1) {
         selectedYearIndex.value++;
       } else {
-        stopPlay(); // Remain at the end instead of resetting back to the beginning
+        stopPlay();
       }
     }, 500);
   }
@@ -593,80 +681,83 @@ const stopPlay = () => {
 };
 
 const focusOnLocation = (partnerName: string) => {
+  if (!mapObject.value) return;
+
   const res = getGeoJsonFeature(partnerName);
-  if (res && mapObject.value) {
-    // Find matching Leaflet layers for this feature
-    const matchingLayers = mapLayers.value.filter((l: any) => {
-      // Direct feature match
-      if (l.feature === res.feature) return true;
-      // Group/GeoJSON layer match
-      if (l.getLayers) {
-        return l.getLayers().some((sub: any) => sub.feature === res.feature);
-      }
-      return false;
-    });
+  if (res) {
+    const bbox = getFeatureBBox(res.feature);
+    if (bbox) {
+      mapObject.value.fitBounds(bbox, {
+        padding: { top: 80, bottom: 80, left: 80, right: 80 },
+        maxZoom: 5,
+        duration: 1200
+      });
 
-    if (matchingLayers.length > 0) {
-      const group = featureGroup(matchingLayers);
-      const bounds = group.getBounds();
-      if (bounds.isValid()) {
-        mapObject.value.flyToBounds(bounds, {
-          padding: [80, 80],
-          maxZoom: 5,
-          duration: 1.2
-        });
+      // Find partner role text
+      const partner = combinedPartners.value.find(p => p.name === partnerName);
+      const isImport = partner?.isImport ?? false;
+      const isExport = partner?.isExport ?? false;
 
-        // Open popup of the first matching layer
-        matchingLayers[0].openPopup();
-        return;
+      let tradeRoleText = '';
+      if (isImport && isExport) {
+        tradeRoleText = 'Import & Export Partner';
+      } else if (isImport) {
+        tradeRoleText = 'Import Partner';
+      } else {
+        tradeRoleText = 'Export Partner';
       }
+
+      const popupHtml = `
+        <div class="custom-map-popup-card">
+          <div class="popup-card-content">
+            <h4 class="popup-card-title">${partnerName}</h4>
+            <p class="popup-card-description">Historical ${tradeRoleText.toLowerCase()} with California in the year ${activeYear.value}.</p>
+            <div class="popup-card-footer">
+              <span class="popup-card-tag">${tradeRoleText}</span>
+              <span class="popup-card-coords">Region Highlighted</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      let popupLngLat: [number, number];
+      const coords = geoCoordinates[partnerName];
+      if (coords) {
+        popupLngLat = [coords[1], coords[0]];
+      } else {
+        popupLngLat = [(bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2];
+      }
+
+      if (activePopup) activePopup.remove();
+      activePopup = new maplibregl.Popup({
+        closeButton: false,
+        className: 'custom-maplibre-popup',
+        offset: [0, -10]
+      })
+        .setLngLat(popupLngLat)
+        .setHTML(popupHtml)
+        .addTo(mapObject.value);
+
+      return;
     }
   }
 
   // Fallback to static coordinates if mapping fails or layer is not drawn
   const coords = geoCoordinates[partnerName];
   if (coords && mapObject.value) {
-    mapObject.value.flyTo(coords, 4, {
-      duration: 1.2
+    mapObject.value.flyTo({
+      center: [coords[1], coords[0]],
+      zoom: 4,
+      duration: 1200
     });
   }
 };
 
-const clearLayers = () => {
-  if (mapObject.value) {
-    mapLayers.value.forEach(layer => {
-      mapObject.value!.removeLayer(layer);
-    });
-    mapLayers.value = [];
-  }
-};
+const isInitialLoad = ref(true);
 
 // Reactive map updates based on selected year/partners
 const updateMapLayers = () => {
-  if (!mapObject.value || isLoading.value || !worldGeoJson.value || !usStatesGeoJson.value) return;
-  clearLayers();
-
-  const newLayers: Layer[] = [];
-
-  // Helper to set hover glow
-  const setupHover = (geoLayer: any, hoverColor: string, baseColor: string) => {
-    geoLayer.on({
-      mouseover: (e: any) => {
-        const layer = e.target;
-        layer.setStyle({
-          color: hoverColor,
-          weight: 2.5
-        });
-      },
-      mouseout: (e: any) => {
-        const layer = e.target;
-        layer.setStyle({
-          color: baseColor,
-          weight: 1.5
-        });
-      }
-    });
-  };
+  if (!mapObject.value || !isMapReady.value || isLoading.value || !worldGeoJson.value || !usStatesGeoJson.value) return;
 
   // Group partners by their resolved GeoJSON feature to prevent duplicate rendering
   const featureGroupMap = new Map<string, {
@@ -680,7 +771,7 @@ const updateMapLayers = () => {
     if (res) {
       const { feature, type } = res;
       if (type === 'state' && feature.properties.name === 'California') {
-        return; // California is rendered as the primary dark yellow home base anchor
+        return; // California is rendered separately as the primary dark yellow home base anchor
       }
       const key = type === 'state' 
         ? `state:${feature.properties.name}` 
@@ -693,157 +784,101 @@ const updateMapLayers = () => {
     }
   });
 
-  // Render a single layer for each unique geographic shape
-  featureGroupMap.forEach(({ feature, partners }) => {
+  const tradeFeatures: any[] = [];
+
+  featureGroupMap.forEach(({ feature, partners }, partnerKey) => {
     const isImport = partners.some(p => p.isImport);
     const isExport = partners.some(p => p.isExport);
-
-    // Merge names for popup card header
     const displayName = partners.map(p => p.name).join(' & ');
 
-    let tradeRoleText = '';
+    let tradeType: 'both' | 'import' | 'export';
+    let tradeRoleText: string;
+    let hoverColorLight: string;
+    let hoverColorDark: string;
+
     if (isImport && isExport) {
+      tradeType = 'both';
       tradeRoleText = 'Import & Export Partner';
+      hoverColorLight = '#047857';
+      hoverColorDark = '#34d399';
     } else if (isImport) {
+      tradeType = 'import';
       tradeRoleText = 'Import Partner';
+      hoverColorLight = '#b45309';
+      hoverColorDark = '#fbbf24';
     } else {
+      tradeType = 'export';
       tradeRoleText = 'Export Partner';
+      hoverColorLight = '#1d4ed8';
+      hoverColorDark = '#60a5fa';
     }
 
-    const popupHtml = `
-      <div class="custom-map-popup-card">
-        <div class="popup-card-content">
-          <h4 class="popup-card-title">${displayName}</h4>
-          <p class="popup-card-description">Historical ${tradeRoleText.toLowerCase()} with California in the year ${activeYear.value}.</p>
-          <div class="popup-card-footer">
-            <span class="popup-card-tag">${tradeRoleText}</span>
-            <span class="popup-card-coords">Region Highlighted</span>
-          </div>
-        </div>
-      </div>
-    `;
-
-    if (isImport && isExport) {
-      const bothLayer = geoJSON(feature, {
-        style: {
-          color: themeMode.value === 'dark' ? '#10b981' : '#059669',
-          weight: 1.5,
-          fillColor: themeMode.value === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)',
-          fillOpacity: 1.0,
-          lineJoin: 'round'
-        }
-      }).addTo(mapObject.value!);
-
-      bothLayer.bindPopup(popupHtml, {
-        closeButton: false,
-        className: 'custom-leaflet-popup',
-        offset: [0, -10]
-      });
-      setupHover(bothLayer, themeMode.value === 'dark' ? '#34d399' : '#047857', themeMode.value === 'dark' ? '#10b981' : '#059669');
-      newLayers.push(bothLayer);
-    } else if (isImport) {
-      const impLayer = geoJSON(feature, {
-        style: {
-          color: themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
-          weight: 1.5,
-          fillColor: themeMode.value === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)',
-          fillOpacity: 1.0,
-          lineJoin: 'round'
-        }
-      }).addTo(mapObject.value!);
-
-      impLayer.bindPopup(popupHtml, {
-        closeButton: false,
-        className: 'custom-leaflet-popup',
-        offset: [0, -10]
-      });
-      setupHover(impLayer, themeMode.value === 'dark' ? '#fbbf24' : '#b45309', themeMode.value === 'dark' ? '#f59e0b' : '#d97706');
-      newLayers.push(impLayer);
-    } else if (isExport) {
-      const expLayer = geoJSON(feature, {
-        style: {
-          color: themeMode.value === 'dark' ? '#3b82f6' : '#2563eb',
-          weight: 1.5,
-          fillColor: themeMode.value === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)',
-          fillOpacity: 1.0,
-          lineJoin: 'round'
-        }
-      }).addTo(mapObject.value!);
-
-      expLayer.bindPopup(popupHtml, {
-        closeButton: false,
-        className: 'custom-leaflet-popup',
-        offset: [0, -10]
-      });
-      setupHover(expLayer, themeMode.value === 'dark' ? '#60a5fa' : '#1d4ed8', themeMode.value === 'dark' ? '#3b82f6' : '#2563eb');
-      newLayers.push(expLayer);
-    }
+    tradeFeatures.push({
+      type: 'Feature',
+      geometry: feature.geometry,
+      properties: {
+        partnerKey,
+        displayName,
+        tradeType,
+        tradeRoleText,
+        description: `Historical ${tradeRoleText.toLowerCase()} with California in the year ${activeYear.value}.`,
+        coordsText: 'Region Highlighted',
+        hoverColorLight,
+        hoverColorDark,
+        tagStyle: ''
+      }
+    });
   });
 
-  // Always render California as a solid dark yellow anchor state
+  const tradeSource = mapObject.value.getSource('trades-data') as maplibregl.GeoJSONSource | undefined;
+  if (tradeSource) {
+    tradeSource.setData({
+      type: 'FeatureCollection',
+      features: tradeFeatures
+    });
+  }
+
+  // Render California as home base anchor
   if (usStatesGeoJson.value) {
     const caliFeature = usStatesGeoJson.value.features.find((f: any) => f.properties.name === 'California');
     if (caliFeature) {
-      const caliLayer = geoJSON(caliFeature, {
-        style: {
-          color: '#854d0e',
-          weight: 2,
-          fillColor: '#ca8a04',
-          fillOpacity: 0.85,
-          lineJoin: 'round'
-        }
-      }).addTo(mapObject.value!);
-
-      const caliPopupHtml = `
-        <div class="custom-map-popup-card">
-          <div class="popup-card-content">
-            <h4 class="popup-card-title">California</h4>
-            <p class="popup-card-description">State of California (Primary Trade Hub)</p>
-            <div class="popup-card-footer">
-              <span class="popup-card-tag" style="background: rgba(202, 138, 4, 0.2); color: #854d0e;">Home Region</span>
-              <span class="popup-card-coords">Anchor Base</span>
-            </div>
-          </div>
-        </div>
-      `;
-
-      caliLayer.bindPopup(caliPopupHtml, {
-        closeButton: false,
-        className: 'custom-leaflet-popup',
-        offset: [0, -10]
-      });
-
-      caliLayer.on({
-        mouseover: (e: any) => {
-          e.target.setStyle({ color: '#713f12', weight: 2.5, fillOpacity: 0.95 });
-        },
-        mouseout: (e: any) => {
-          e.target.setStyle({ color: '#854d0e', weight: 2, fillOpacity: 0.85 });
-        }
-      });
-
-      newLayers.push(caliLayer);
+      const caliSource = mapObject.value.getSource('california-data') as maplibregl.GeoJSONSource | undefined;
+      if (caliSource) {
+        caliSource.setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: caliFeature.geometry,
+            properties: {
+              name: 'California',
+              displayName: 'California',
+              tradeRoleText: 'Home Region',
+              description: 'State of California (Primary Trade Hub)',
+              tagStyle: 'background: rgba(202, 138, 4, 0.2); color: #854d0e;',
+              coordsText: 'Anchor Base'
+            }
+          }]
+        });
+      }
     }
   }
 
-  mapLayers.value = newLayers;
-
   // Fit bounds dynamically ON INITIAL LOAD ONLY to prevent camera jumping when resizing on mobile
-  if (newLayers.length > 0 && !isPlaying.value && isInitialLoad.value) {
+  if (tradeFeatures.length > 0 && !isPlaying.value && isInitialLoad.value) {
     isInitialLoad.value = false;
-    const group = featureGroup(newLayers);
-    const bounds = group.getBounds();
-    if (bounds.isValid()) {
-      mapObject.value.fitBounds(bounds, {
-        padding: [30, 30],
+    const allBounds = calculateFeatureCollectionBBox({
+      type: 'FeatureCollection',
+      features: tradeFeatures
+    });
+    if (allBounds) {
+      mapObject.value.fitBounds(allBounds, {
+        padding: 30,
         maxZoom: 4.5,
         animate: false
       });
     }
   }
 };
-
-const isInitialLoad = ref(true);
 
 watch(combinedPartners, () => {
   updateMapLayers();
@@ -852,7 +887,7 @@ watch(combinedPartners, () => {
 watch(isMobileExpanded, () => {
   setTimeout(() => {
     if (mapObject.value) {
-      mapObject.value.invalidateSize({ animate: false });
+      mapObject.value.resize();
     }
   }, 360);
 });
@@ -860,25 +895,269 @@ watch(isMobileExpanded, () => {
 onMounted(() => {
   if (!mapContainer.value) return;
 
-  // Initialize Map focused on single world instance excluding Antarctica
-  const mapInst = map(mapContainer.value, {
-    minZoom: 2.2,
+  const osmTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+  // Initialize MapLibre GL Map
+  const mapInst = new maplibregl.Map({
+    container: mapContainer.value,
+    style: {
+      version: 8,
+      sources: {
+        'osm-tiles': {
+          type: 'raster',
+          tiles: [osmTiles],
+          tileSize: 256,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxzoom: 19
+        }
+      },
+      layers: [
+        {
+          id: 'osm-tiles-layer',
+          type: 'raster',
+          source: 'osm-tiles',
+          minzoom: 0,
+          maxzoom: 19
+        }
+      ]
+    },
+    center: [-80.0, 25.0],
+    zoom: 2.2,
+    minZoom: 1.5,
     maxZoom: 10,
-    worldCopyJump: false,
-    maxBounds: [[-60, -180], [85, 180]],
-    maxBoundsViscosity: 1.0
-  }).setView([25.0, -80.0], 2.2);
+    renderWorldCopies: false,
+    maxBounds: [[-179.99, -60], [179.99, 85]],
+    canvasContextAttributes: {
+      preserveDrawingBuffer: true
+    }
+  });
+
   mapObject.value = mapInst;
 
-  setTileLayer();
+  mapInst.on('load', () => {
+    registerAllPatterns(mapInst);
+
+    // Trade partners GeoJSON source
+    mapInst.addSource('trades-data', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // California anchor GeoJSON source
+    mapInst.addSource('california-data', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // California Fill Layer (Solid dark yellow)
+    mapInst.addLayer({
+      id: 'california-fill',
+      type: 'fill',
+      source: 'california-data',
+      paint: {
+        'fill-color': '#ca8a04',
+        'fill-opacity': 0.85
+      }
+    });
+
+    // California Outline Layer
+    mapInst.addLayer({
+      id: 'california-outline',
+      type: 'line',
+      source: 'california-data',
+      layout: {
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': '#854d0e',
+        'line-width': 2
+      }
+    });
+
+    // California Hover Outline Layer
+    mapInst.addLayer({
+      id: 'california-outline-hover',
+      type: 'line',
+      source: 'california-data',
+      filter: ['==', ['get', 'name'], ''],
+      layout: {
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': '#713f12',
+        'line-width': 2.5
+      }
+    });
+
+    // Trades Fill Layers (Pattern fills based on trade relationship)
+    mapInst.addLayer({
+      id: 'trades-fill-import',
+      type: 'fill',
+      source: 'trades-data',
+      filter: ['==', ['get', 'tradeType'], 'import'],
+      paint: {
+        'fill-pattern': themeMode.value === 'dark' ? 'colorblind-stripes' : 'colorblind-stripes-light',
+        'fill-opacity': 1.0
+      }
+    });
+
+    mapInst.addLayer({
+      id: 'trades-fill-export',
+      type: 'fill',
+      source: 'trades-data',
+      filter: ['==', ['get', 'tradeType'], 'export'],
+      paint: {
+        'fill-pattern': themeMode.value === 'dark' ? 'colorblind-dots' : 'colorblind-dots-light',
+        'fill-opacity': 1.0
+      }
+    });
+
+    mapInst.addLayer({
+      id: 'trades-fill-both',
+      type: 'fill',
+      source: 'trades-data',
+      filter: ['==', ['get', 'tradeType'], 'both'],
+      paint: {
+        'fill-pattern': themeMode.value === 'dark' ? 'colorblind-both' : 'colorblind-both-light',
+        'fill-opacity': 1.0
+      }
+    });
+
+    // Trades Outlines
+    mapInst.addLayer({
+      id: 'trades-outline-import',
+      type: 'line',
+      source: 'trades-data',
+      filter: ['==', ['get', 'tradeType'], 'import'],
+      layout: {
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': themeMode.value === 'dark' ? '#f59e0b' : '#d97706',
+        'line-width': 1.5
+      }
+    });
+
+    mapInst.addLayer({
+      id: 'trades-outline-export',
+      type: 'line',
+      source: 'trades-data',
+      filter: ['==', ['get', 'tradeType'], 'export'],
+      layout: {
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': themeMode.value === 'dark' ? '#3b82f6' : '#2563eb',
+        'line-width': 1.5
+      }
+    });
+
+    mapInst.addLayer({
+      id: 'trades-outline-both',
+      type: 'line',
+      source: 'trades-data',
+      filter: ['==', ['get', 'tradeType'], 'both'],
+      layout: {
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': themeMode.value === 'dark' ? '#10b981' : '#059669',
+        'line-width': 1.5
+      }
+    });
+
+    // Trades Hover Highlight Outline
+    mapInst.addLayer({
+      id: 'trades-outline-hover',
+      type: 'line',
+      source: 'trades-data',
+      filter: ['==', ['get', 'partnerKey'], ''],
+      layout: {
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': themeMode.value === 'dark' ? ['get', 'hoverColorDark'] : ['get', 'hoverColorLight'],
+        'line-width': 2.5
+      }
+    });
+
+    // Interactive Hover Listeners
+    const fillLayers = ['trades-fill-import', 'trades-fill-export', 'trades-fill-both'];
+
+    mapInst.on('mousemove', fillLayers, (e: any) => {
+      if (e.features && e.features.length > 0) {
+        mapInst.getCanvas().style.cursor = 'pointer';
+        const partnerKey = e.features[0].properties.partnerKey;
+        mapInst.setFilter('trades-outline-hover', ['==', ['get', 'partnerKey'], partnerKey]);
+      }
+    });
+
+    mapInst.on('mouseleave', fillLayers, () => {
+      mapInst.getCanvas().style.cursor = '';
+      mapInst.setFilter('trades-outline-hover', ['==', ['get', 'partnerKey'], '']);
+    });
+
+    mapInst.on('mousemove', 'california-fill', () => {
+      mapInst.getCanvas().style.cursor = 'pointer';
+      mapInst.setFilter('california-outline-hover', ['==', ['get', 'name'], 'California']);
+    });
+
+    mapInst.on('mouseleave', 'california-fill', () => {
+      mapInst.getCanvas().style.cursor = '';
+      mapInst.setFilter('california-outline-hover', ['==', ['get', 'name'], '']);
+    });
+
+    // Interactive Click Popup Listener
+    const interactiveLayers = [...fillLayers, 'california-fill'];
+
+    mapInst.on('click', interactiveLayers, (e: any) => {
+      if (!e.features || e.features.length === 0) return;
+      const props = e.features[0].properties;
+
+      const popupHtml = `
+        <div class="custom-map-popup-card">
+          <div class="popup-card-content">
+            <h4 class="popup-card-title">${props.displayName}</h4>
+            <p class="popup-card-description">${props.description}</p>
+            <div class="popup-card-footer">
+              <span class="popup-card-tag" style="${props.tagStyle || ''}">${props.tradeRoleText}</span>
+              <span class="popup-card-coords">${props.coordsText || 'Region Highlighted'}</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (activePopup) activePopup.remove();
+      activePopup = new maplibregl.Popup({
+        closeButton: false,
+        className: 'custom-maplibre-popup',
+        offset: [0, -10]
+      })
+        .setLngLat(e.lngLat)
+        .setHTML(popupHtml)
+        .addTo(mapInst);
+    });
+
+    // Close popup when clicking elsewhere on map background
+    mapInst.on('click', (e: any) => {
+      const hitFeatures = mapInst.queryRenderedFeatures(e.point, { layers: interactiveLayers });
+      if (hitFeatures.length === 0 && activePopup) {
+        activePopup.remove();
+        activePopup = null;
+      }
+    });
+
+    isMapReady.value = true;
+    updateMapLayers();
+  });
 
   // Load spreadsheet database asynchronously
   parseSheetColumns(props.dataSource)
     .then((data) => {
-      // Set isLoading to false BEFORE setting data, so watcher is not blocked
       isLoading.value = false;
       allTradesData.value = data;
       selectedYearIndex.value = 0;
+      updateMapLayers();
     })
     .catch((err) => {
       console.error('Failed to parse trades data:', err);
@@ -949,12 +1228,6 @@ onMounted(() => {
           };
         };
 
-        // Extract sub-polygons in descending order to avoid index shifting:
-        // Guadeloupe: indices 5, 6, 7
-        // Martinique: index 4
-        // Mayotte: index 3
-        // Réunion: index 2
-        // French Guiana: index 1
         countriesJson.features.push(extractPolygons(fra, [5, 6, 7], 'Guadeloupe'));
         countriesJson.features.push(extractPolygons(fra, [4], 'Martinique'));
         countriesJson.features.push(extractPolygons(fra, [3], 'Mayotte'));
@@ -985,7 +1258,7 @@ onMounted(() => {
         }
       });
 
-      // Filter out Antarctica to prevent giant boundary stroke box artifacts across 0°, ±180°, and -85°
+      // Filter out Antarctica to prevent boundary artifacts across boundaries
       countriesJson.features = countriesJson.features.filter((f: any) => f.properties.NAME !== 'Antarctica' && f.properties.ISO_A3 !== 'ATA');
 
       worldGeoJson.value = countriesJson;
@@ -999,13 +1272,17 @@ onMounted(() => {
 
 const handleResize = () => {
   if (mapObject.value) {
-    mapObject.value.invalidateSize({ animate: false });
+    mapObject.value.resize();
   }
 };
 
 onBeforeUnmount(() => {
   stopPlay();
   window.removeEventListener('resize', handleResize);
+  if (activePopup) {
+    activePopup.remove();
+    activePopup = null;
+  }
   if (mapObject.value) {
     mapObject.value.remove();
     mapObject.value = null;
@@ -1026,8 +1303,6 @@ onBeforeUnmount(() => {
       <div class="sidebar-header-section">
         <h2>{{ title }}</h2>
       </div>
-
-
 
       <!-- Loading skeleton -->
       <div v-if="isLoading" class="sidebar-section loading-panel">
@@ -1124,71 +1399,21 @@ onBeforeUnmount(() => {
           🏭 Energy Uses
         </button>
       </nav>
-      <div ref="mapContainer" class="map-element">
-        <!-- Hidden SVG pattern definitions inside map container for screenshot capture compatibility -->
-        <svg width="0" height="0" style="position: absolute; pointer-events: none; z-index: -1;">
-          <defs>
-            <!-- Dark Mode Diagonal Stripe Pattern (Import) -->
-            <pattern id="colorblind-stripes" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(245, 158, 11, 0.35)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
-            </pattern>
-
-            <!-- Light Mode Diagonal Stripe Pattern (Import) -->
-            <pattern id="colorblind-stripes-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(217, 119, 6, 0.32)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
-            </pattern>
-
-            <!-- Dark Mode Dot Pattern (Export) -->
-            <pattern id="colorblind-dots" width="12" height="12" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(59, 130, 246, 0.35)" />
-              <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
-            </pattern>
-
-            <!-- Light Mode Dot Pattern (Export) -->
-            <pattern id="colorblind-dots-light" width="12" height="12" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(37, 99, 235, 0.32)" />
-              <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
-            </pattern>
-
-            <!-- Dark Mode Both Pattern (Import + Export) -->
-            <pattern id="colorblind-both" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.35)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#f59e0b" stroke-width="3" />
-              <circle cx="6" cy="6" r="2.5" fill="#3b82f6" />
-            </pattern>
-
-            <!-- Light Mode Both Pattern (Import + Export) -->
-            <pattern id="colorblind-both-light" width="12" height="12" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-              <rect width="12" height="12" fill="rgba(16, 185, 129, 0.32)" />
-              <line x1="0" y1="0" x2="0" y2="12" stroke="#d97706" stroke-width="3" />
-              <circle cx="6" cy="6" r="2.5" fill="#2563eb" />
-            </pattern>
-          </defs>
-        </svg>
-      </div>
+      <div ref="mapContainer" class="map-element"></div>
     </main>
   </div>
 </template>
 
 <style>
-/* Leaflet core layout resets */
+/* MapLibre core layout resets */
 .map-element {
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
-.leaflet-container img {
-  max-width: none !important;
-  max-height: none !important;
-}
-
-/* Remove Leaflet default L.divIcon border & background */
-.cali-anchor-icon,
-.partner-trade-icon {
-  background: transparent !important;
-  border: none !important;
+.maplibregl-canvas {
+  outline: none;
 }
 
 /* Specific timeline slider styling */
