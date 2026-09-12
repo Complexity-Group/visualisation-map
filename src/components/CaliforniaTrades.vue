@@ -577,6 +577,8 @@ async function loadTileImage(url: string): Promise<HTMLImageElement | ImageBitma
   return null;
 }
 
+let activeBlobUrl: string | null = null;
+
 // Custom Leaflet.BigImage subclass enhanced with MultiPolygon support & colorblind pattern rendering
 class CustomBigImageControl extends BigImageControl {
   constructor(options?: BigImageControlOptions) {
@@ -589,6 +591,19 @@ class CustomBigImageControl extends BigImageControl {
       minScale: 1,
       ...options
     });
+  }
+
+  // Override onAdd to completely hide default on-map export button while keeping control functional
+  onAdd(map: any) {
+    const container = super.onAdd ? super.onAdd(map) : document.createElement('div');
+    if (container) {
+      container.style.display = 'none';
+      container.style.visibility = 'hidden';
+      container.style.pointerEvents = 'none';
+      container.style.width = '0px';
+      container.style.height = '0px';
+    }
+    return container;
   }
 
   // Override parameter panel creation to fix Leaflet.BigImage webp selection bug
@@ -935,28 +950,68 @@ class CustomBigImageControl extends BigImageControl {
       const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
       const quality = 0.95;
 
-      (this as any).canvas.toBlob((blob: Blob | null) => {
-        if (!blob) {
-          console.error('Failed to generate image blob');
-          resolve();
-          return;
-        }
-
-        const rawFileName = (this as any).options.fileName || 'Map-Visualization';
-        const sanitized = rawFileName.replace(/\.(jpeg|jpg|png|webp)$/i, '');
-        const ext = format === 'jpeg' ? 'jpeg' : format;
+      const triggerDownload = (downloadUrl: string, fileName: string) => {
         const link = document.createElement('a');
-        link.download = `${sanitized}.${ext}`;
-        link.href = URL.createObjectURL(blob);
-
+        link.download = fileName;
+        link.href = downloadUrl;
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
-
         setTimeout(() => {
-          URL.revokeObjectURL(link.href);
-          resolve();
-        }, 100);
+          if (link.parentNode) {
+            link.parentNode.removeChild(link);
+          }
+        }, 500);
+      };
+
+      const rawFileName = (this as any).options.fileName || 'Map-Visualization';
+      const sanitized = rawFileName.replace(/\.(jpeg|jpg|png|webp)$/i, '');
+      const ext = format === 'jpeg' ? 'jpeg' : format;
+      const fullFileName = `${sanitized}.${ext}`;
+
+      (this as any).canvas.toBlob((blob: Blob | null) => {
+        let downloadUrl = '';
+        if (blob) {
+          if (activeBlobUrl) {
+            URL.revokeObjectURL(activeBlobUrl);
+          }
+          activeBlobUrl = URL.createObjectURL(blob);
+          downloadUrl = activeBlobUrl;
+        } else {
+          try {
+            downloadUrl = (this as any).canvas.toDataURL(mimeType, quality);
+          } catch (e) {
+            console.error('Failed to generate canvas image:', e);
+            resolve();
+            return;
+          }
+        }
+
+        const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+        // Post message to parent window if embedded in an iframe
+        if (isIframe && typeof window !== 'undefined' && window.parent) {
+          try {
+            let dataUrl = '';
+            try {
+              dataUrl = (this as any).canvas.toDataURL(mimeType, quality);
+            } catch (e) {
+              dataUrl = downloadUrl;
+            }
+            window.parent.postMessage({
+              type: 'MAP_EXPORT_DOWNLOAD',
+              action: 'download',
+              fileName: fullFileName,
+              dataUrl,
+              format
+            }, '*');
+          } catch (e) {
+            // ignore postMessage error
+          }
+        }
+
+        // Directly trigger the automatic download in the browser
+        triggerDownload(downloadUrl, fullFileName);
+        resolve();
       }, mimeType, quality);
     });
   }
@@ -1045,7 +1100,7 @@ const togglePlay = () => {
       } else {
         stopPlay(); // Remain at the end instead of resetting back to the beginning
       }
-    }, 500);
+    }, 200);
   }
 };
 
@@ -1491,6 +1546,10 @@ const handleResize = () => {
 onBeforeUnmount(() => {
   stopPlay();
   window.removeEventListener('resize', handleResize);
+  if (activeBlobUrl) {
+    URL.revokeObjectURL(activeBlobUrl);
+    activeBlobUrl = null;
+  }
   if (bigImageControlInstance.value && mapObject.value) {
     mapObject.value.removeControl(bigImageControlInstance.value);
     bigImageControlInstance.value = null;
@@ -2052,5 +2111,21 @@ onBeforeUnmount(() => {
   .map-legend-card:not(.collapsed) .legend-sub {
     font-size: 9.5px;
   }
+}
+
+/* Completely hide the default Leaflet.BigImage on-map export button */
+#print-container,
+.leaflet-control #print-container,
+.leaflet-control-container #print-container,
+.leaflet-top.leaflet-right #print-container {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
 }
 </style>
