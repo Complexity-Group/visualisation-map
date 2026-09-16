@@ -264,7 +264,6 @@ const mapObject = shallowRef<LeafletMap | null>(null);
 const currentTileLayer = shallowRef<Layer | null>(null);
 
 const themeMode = ref<'light' | 'dark'>('light');
-const isMobileExpanded = ref(false);
 
 const allTradesData = ref<TradesData | null>(null);
 
@@ -1056,7 +1055,48 @@ class CustomBigImageControl extends BigImageControl {
 }
 
 const isCapturing = ref(false);
-const isLegendCollapsed = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+const isLegendCollapsed = ref(true);
+const isTimelineCollapsed = ref(false);
+const isPartnersCollapsed = ref(true);
+const isAnalyticsCollapsed = ref(true);
+
+const toggleCard = (card: 'legend' | 'timeline' | 'partners' | 'analytics') => {
+  const isMobile = typeof window !== 'undefined' ? window.innerWidth <= 768 : false;
+  if (card === 'legend') {
+    const willOpen = isLegendCollapsed.value;
+    isLegendCollapsed.value = !willOpen;
+    if (isMobile && willOpen) {
+      isTimelineCollapsed.value = true;
+      isPartnersCollapsed.value = true;
+      isAnalyticsCollapsed.value = true;
+    }
+  } else if (card === 'timeline') {
+    const willOpen = isTimelineCollapsed.value;
+    isTimelineCollapsed.value = !willOpen;
+    if (isMobile && willOpen) {
+      isLegendCollapsed.value = true;
+      isPartnersCollapsed.value = true;
+      isAnalyticsCollapsed.value = true;
+    }
+  } else if (card === 'partners') {
+    const willOpen = isPartnersCollapsed.value;
+    isPartnersCollapsed.value = !willOpen;
+    if (isMobile && willOpen) {
+      isLegendCollapsed.value = true;
+      isTimelineCollapsed.value = true;
+      isAnalyticsCollapsed.value = true;
+    }
+  } else if (card === 'analytics') {
+    const willOpen = isAnalyticsCollapsed.value;
+    isAnalyticsCollapsed.value = !willOpen;
+    if (isMobile && willOpen) {
+      isLegendCollapsed.value = true;
+      isTimelineCollapsed.value = true;
+      isPartnersCollapsed.value = true;
+    }
+  }
+};
+
 const bigImageControlInstance = shallowRef<CustomBigImageControl | null>(null);
 
 const captureScreenshot = async () => {
@@ -1109,6 +1149,16 @@ const stopPlay = () => {
   if (playInterval) {
     clearInterval(playInterval);
     playInterval = null;
+  }
+};
+
+const resetViewAndTimeline = () => {
+  stopPlay();
+  selectedYearIndex.value = 0;
+  if (mapObject.value) {
+    const minZ = mapObject.value.getMinZoom ? mapObject.value.getMinZoom() : 2.2;
+    mapObject.value.flyTo([25.0, -80.0], minZ, { duration: 0.8 });
+    mapObject.value.closePopup();
   }
 };
 
@@ -1369,14 +1419,6 @@ watch(combinedPartners, () => {
   updateMapLayers();
 });
 
-watch(isMobileExpanded, () => {
-  setTimeout(() => {
-    if (mapObject.value) {
-      mapObject.value.invalidateSize({ animate: false });
-    }
-  }, 360);
-});
-
 onMounted(() => {
   if (!mapContainer.value) return;
 
@@ -1391,6 +1433,13 @@ onMounted(() => {
   mapObject.value = mapInst;
 
   setTileLayer();
+
+  const dockEl = document.querySelector('.bottom-dock-container') as HTMLElement | null;
+  if (dockEl) {
+    dockEl.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+    dockEl.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true });
+    dockEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  }
 
   // Load spreadsheet database asynchronously
   parseSheetColumns(props.dataSource)
@@ -1563,105 +1612,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="dashboard" :class="themeMode">
-    <!-- Sidebar -->
-    <aside class="sidebar" :class="{ 'mobile-expanded': isMobileExpanded }">
-      <!-- Mobile Drawer Handle -->
-      <div class="mobile-drawer-handle" @click="isMobileExpanded = !isMobileExpanded">
-        <span class="handle-bar"></span>
-        <span class="handle-text">{{ isMobileExpanded ? 'Tap to Collapse' : 'Tap to View Partners (' + combinedPartners.length + ')' }}</span>
-      </div>
-
-      <div class="sidebar-header-section">
-        <h2>{{ title }}</h2>
-      </div>
-
-
-
-      <!-- Loading skeleton -->
-      <div v-if="isLoading" class="sidebar-section loading-panel">
-        <p>Loading spreadsheet database...</p>
-      </div>
-
-      <template v-else>
-        <!-- Timeline Controls -->
-        <div class="sidebar-section timeline-panel">
-          <div class="timeline-header">
-            <h3>Year: <span class="highlight-year">{{ activeYear }}</span></h3>
-            <div class="action-btn-group">
-              <button class="play-btn" @click="togglePlay" :class="{ playing: isPlaying }">
-                <span v-if="isPlaying">⏸ Pause</span>
-                <span v-else>▶ Play</span>
-              </button>
-              <button class="screenshot-btn" @click="captureScreenshot" :disabled="isCapturing" title="Download JPEG Screenshot of current year">
-                <span v-if="isCapturing">⏳ Capturing...</span>
-                <span v-else>📸 JPEG</span>
-              </button>
-            </div>
-          </div>
-          <div class="slider-container">
-            <input type="range" :min="0" :max="availableYears.length - 1" v-model.number="selectedYearIndex"
-              class="timeline-slider" @input="stopPlay" />
-            <div class="slider-labels" v-if="availableYears.length > 0">
-              <span>{{ availableYears[0] }}</span>
-              <span v-if="availableYears.length > 2">{{ availableYears[Math.floor((availableYears.length - 1) / 2)] }}</span>
-              <span>{{ availableYears[availableYears.length - 1] }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Interactive Trade Partners List -->
-        <div class="sidebar-section">
-          <h3>Trading Partners</h3>
-          <div class="location-list">
-            <button v-for="partner in combinedPartners" :key="partner.name" class="location-card partner-card"
-              @click="focusOnLocation(partner.name)">
-              <div class="location-info">
-                <span class="icon">⚓</span>
-                <div class="card-details">
-                  <div class="partner-title-row">
-                    <h4 class="loc-title">{{ partner.name }}</h4>
-                    <div class="trade-badges">
-                      <span v-if="partner.isImport && partner.isExport" class="badge both-badge">Both</span>
-                      <template v-else>
-                        <span v-if="partner.isImport" class="badge import-badge">Imp</span>
-                        <span v-if="partner.isExport" class="badge export-badge">Exp</span>
-                      </template>
-                    </div>
-                  </div>
-                  <p class="loc-coords" v-if="geoCoordinates[partner.name]">
-                    {{ geoCoordinates[partner.name][0].toFixed(2) }}°, {{ geoCoordinates[partner.name][1].toFixed(2) }}°
-                  </p>
-                </div>
-              </div>
-            </button>
-            <div v-if="combinedPartners.length === 0" class="no-data-msg">
-              No registered trade partners found for this year.
-            </div>
-          </div>
-        </div>
-
-        <!-- Stats Box -->
-        <div class="sidebar-section quick-stats">
-          <h3>Connections Analytics</h3>
-          <div class="stat-grid">
-            <div class="stat-box">
-              <span class="stat-val">{{ combinedPartners.length }}</span>
-              <span class="stat-label">Total Partners</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-val">{{ activeImports.length }}</span>
-              <span class="stat-label">Imports</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-val">{{ activeExports.length }}</span>
-              <span class="stat-label">Exports</span>
-            </div>
-          </div>
-        </div>
-      </template>
-    </aside>
-
-    <!-- Map View -->
+    <!-- Map View (Takes Full Screen) -->
     <main class="map-view">
       <!-- Floating Pill Tab Navigation inside Map View for Perfect Center Positioning -->
       <nav class="floating-tabs-nav">
@@ -1673,67 +1624,193 @@ onBeforeUnmount(() => {
         </button>
       </nav>
 
-      <!-- Mobile Backdrop when legend is expanded on mobile -->
-      <div v-if="!isLegendCollapsed" class="mobile-legend-backdrop" @click="isLegendCollapsed = true"></div>
-
-      <!-- Floating Map Legend Card -->
-      <div class="map-legend-card" :class="{ 'collapsed': isLegendCollapsed }">
-        <div class="legend-header" @click="isLegendCollapsed = !isLegendCollapsed">
-          <div class="legend-title-group">
-            <span class="legend-icon">🗺️</span>
-            <span class="legend-title">Trade Legend</span>
+      <!-- Bottom Dock: Legend in bottom-left corner + 3 blocks from left panel next to it -->
+      <div class="bottom-dock-container">
+        <!-- 0. Trade Legend Block (Moved to bottom left corner) -->
+        <div class="dock-card legend-card" :class="{ 'collapsed': isLegendCollapsed }">
+          <div class="dock-card-header legend-header" @click="toggleCard('legend')">
+            <div class="legend-title-group">
+              <span class="legend-icon">🗺️</span>
+              <span class="legend-title">
+                <span class="title-full">Trade Legend</span>
+                <span class="title-short">Legend</span>
+              </span>
+            </div>
+            <button class="legend-toggle-btn" type="button" :title="isLegendCollapsed ? 'Expand Legend' : 'Collapse Legend'">
+              {{ isLegendCollapsed ? '▲' : '▼' }}
+            </button>
           </div>
-          <button class="legend-toggle-btn" type="button" :title="isLegendCollapsed ? 'Expand Legend' : 'Collapse Legend'">
-            {{ isLegendCollapsed ? '▼' : '▲' }}
-          </button>
+
+          <div v-show="!isLegendCollapsed" class="legend-body">
+            <!-- Import / Energy Sources -->
+            <div class="legend-item">
+              <svg class="legend-swatch" width="20" height="20">
+                <rect width="20" height="20" rx="4"
+                  :fill="themeMode === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)'"
+                  :stroke="themeMode === 'dark' ? '#f97316' : '#ea580c'" stroke-width="1.5" />
+              </svg>
+              <div class="legend-text">
+                <span class="legend-label">Energy Sources (Imports)</span>
+                <span class="legend-sub">Orange Diagonal Lines</span>
+              </div>
+            </div>
+
+            <!-- Export / Energy Uses -->
+            <div class="legend-item">
+              <svg class="legend-swatch" width="20" height="20">
+                <rect width="20" height="20" rx="4"
+                  :fill="themeMode === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)'"
+                  :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
+              </svg>
+              <div class="legend-text">
+                <span class="legend-label">Energy Uses (Exports)</span>
+                <span class="legend-sub">Green Dots</span>
+              </div>
+            </div>
+
+            <!-- Both Import & Export -->
+            <div class="legend-item">
+              <svg class="legend-swatch" width="20" height="20">
+                <rect width="20" height="20" rx="4"
+                  :fill="themeMode === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)'"
+                  :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
+              </svg>
+              <div class="legend-text">
+                <span class="legend-label">Both (Import & Export)</span>
+                <span class="legend-sub">Orange Lines + Green Dots</span>
+              </div>
+            </div>
+
+            <!-- California Anchor -->
+            <div class="legend-item">
+              <div class="legend-swatch solid-cali-swatch"></div>
+              <div class="legend-text">
+                <span class="legend-label">California</span>
+                <span class="legend-sub">Main Trade Hub</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div v-show="!isLegendCollapsed" class="legend-body">
-          <!-- Import / Energy Sources -->
-          <div class="legend-item">
-            <svg class="legend-swatch" width="22" height="22">
-              <rect width="22" height="22" rx="4"
-                :fill="themeMode === 'dark' ? 'url(#colorblind-stripes)' : 'url(#colorblind-stripes-light)'"
-                :stroke="themeMode === 'dark' ? '#f97316' : '#ea580c'" stroke-width="1.5" />
-            </svg>
-            <div class="legend-text">
-              <span class="legend-label">Energy Sources (Imports)</span>
-              <span class="legend-sub">Orange Diagonal Lines</span>
+        <!-- 1. Timeline & Controls Block -->
+        <div class="dock-card timeline-card" :class="{ 'collapsed': isTimelineCollapsed }">
+          <div class="dock-card-header timeline-header clickable" @click="toggleCard('timeline')">
+            <div class="timeline-title-wrap">
+              <span class="dock-icon">⏱️</span>
+              <span class="timeline-prefix"><span class="title-full">YEAR:</span></span>
+              <span class="highlight-year">{{ activeYear }}</span>
+            </div>
+            <div class="header-right-actions">
+              <div class="action-btn-group" @click.stop>
+                <button class="reset-btn" @click="resetViewAndTimeline" title="Reset zoom to whole map and year to earliest">
+                  <span>↺ Reset</span>
+                </button>
+                <button class="play-btn" @click="togglePlay" :class="{ playing: isPlaying }" :title="isPlaying ? 'Pause Timeline' : 'Play Timeline'">
+                  <span v-if="isPlaying">⏸ Pause</span>
+                  <span v-else>▶ Play</span>
+                </button>
+                <button class="screenshot-btn" @click="captureScreenshot" :disabled="isCapturing" title="Download JPEG Screenshot of current year">
+                  <span v-if="isCapturing">⏳ Capturing...</span>
+                  <span v-else>📸 JPEG</span>
+                </button>
+              </div>
+              <button class="dock-toggle-btn" type="button" :title="isTimelineCollapsed ? 'Expand Timeline' : 'Collapse Timeline'">
+                {{ isTimelineCollapsed ? '▲' : '▼' }}
+              </button>
             </div>
           </div>
 
-          <!-- Export / Energy Uses -->
-          <div class="legend-item">
-            <svg class="legend-swatch" width="22" height="22">
-              <rect width="22" height="22" rx="4"
-                :fill="themeMode === 'dark' ? 'url(#colorblind-dots)' : 'url(#colorblind-dots-light)'"
-                :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
-            </svg>
-            <div class="legend-text">
-              <span class="legend-label">Energy Uses (Exports)</span>
-              <span class="legend-sub">Green Dots</span>
+          <div v-show="!isTimelineCollapsed" class="timeline-card-body">
+            <div class="slider-container">
+              <input type="range" :min="0" :max="availableYears.length - 1" v-model.number="selectedYearIndex"
+                class="timeline-slider" @input="stopPlay" />
+              <div class="slider-labels" v-if="availableYears.length > 0">
+                <span>{{ availableYears[0] }}</span>
+                <span v-if="availableYears.length > 2">{{ availableYears[Math.floor((availableYears.length - 1) / 2)] }}</span>
+                <span>{{ availableYears[availableYears.length - 1] }}</span>
+              </div>
             </div>
           </div>
+        </div>
 
-          <!-- Both Import & Export -->
-          <div class="legend-item">
-            <svg class="legend-swatch" width="22" height="22">
-              <rect width="22" height="22" rx="4"
-                :fill="themeMode === 'dark' ? 'url(#colorblind-both)' : 'url(#colorblind-both-light)'"
-                :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
-            </svg>
-            <div class="legend-text">
-              <span class="legend-label">Both (Import & Export)</span>
-              <span class="legend-sub">Orange Lines + Green Dots</span>
+        <!-- 2. Trading Partners Block -->
+        <div class="dock-card partners-card" :class="{ 'collapsed': isPartnersCollapsed }">
+          <div class="dock-card-header clickable" @click="toggleCard('partners')">
+            <div class="header-title-row">
+              <span class="dock-icon">⚓</span>
+              <span class="dock-card-title">
+                <span class="title-full">Trading Partners</span>
+                <span class="title-short">Partners</span>
+              </span>
+              <span class="count-badge">{{ combinedPartners.length }}</span>
             </div>
+            <button class="dock-toggle-btn" type="button" :title="isPartnersCollapsed ? 'Expand Partners' : 'Collapse Partners'">
+              {{ isPartnersCollapsed ? '▲' : '▼' }}
+            </button>
           </div>
 
-          <!-- California Anchor -->
-          <div class="legend-item">
-            <div class="legend-swatch solid-cali-swatch"></div>
-            <div class="legend-text">
-              <span class="legend-label">California</span>
-              <span class="legend-sub">Main Trade Hub</span>
+          <div v-show="!isPartnersCollapsed" class="dock-card-body partners-scroll-body">
+            <div v-if="isLoading" class="no-data-msg">Loading spreadsheet database...</div>
+            <template v-else>
+              <div class="location-list">
+                <button v-for="partner in combinedPartners" :key="partner.name" class="location-card partner-card"
+                  @click="focusOnLocation(partner.name)" :title="'Focus on ' + partner.name">
+                  <div class="location-info">
+                    <span class="icon">⚓</span>
+                    <div class="card-details">
+                      <div class="partner-title-row">
+                        <h4 class="loc-title">{{ partner.name }}</h4>
+                        <div class="trade-badges">
+                          <span v-if="partner.isImport && partner.isExport" class="badge both-badge">Both</span>
+                          <template v-else>
+                            <span v-if="partner.isImport" class="badge import-badge">Imp</span>
+                            <span v-if="partner.isExport" class="badge export-badge">Exp</span>
+                          </template>
+                        </div>
+                      </div>
+                      <p class="loc-coords" v-if="geoCoordinates[partner.name]">
+                        {{ geoCoordinates[partner.name][0].toFixed(2) }}°, {{ geoCoordinates[partner.name][1].toFixed(2) }}°
+                      </p>
+                    </div>
+                  </div>
+                </button>
+                <div v-if="combinedPartners.length === 0" class="no-data-msg">
+                  No registered trade partners found for this year.
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 3. Connections Analytics Block -->
+        <div class="dock-card analytics-card" :class="{ 'collapsed': isAnalyticsCollapsed }">
+          <div class="dock-card-header clickable" @click="toggleCard('analytics')">
+            <div class="header-title-row">
+              <span class="dock-icon">📊</span>
+              <span class="dock-card-title">
+                <span class="title-full">Connections Analytics</span>
+                <span class="title-short">Analytics</span>
+              </span>
+            </div>
+            <button class="dock-toggle-btn" type="button" :title="isAnalyticsCollapsed ? 'Expand Analytics' : 'Collapse Analytics'">
+              {{ isAnalyticsCollapsed ? '▲' : '▼' }}
+            </button>
+          </div>
+
+          <div v-show="!isAnalyticsCollapsed" class="dock-card-body analytics-body">
+            <div class="stat-grid">
+              <div class="stat-box">
+                <span class="stat-val">{{ combinedPartners.length }}</span>
+                <span class="stat-label">Total Partners</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-val">{{ activeImports.length }}</span>
+                <span class="stat-label">Imports</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-val">{{ activeExports.length }}</span>
+                <span class="stat-label">Exports</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1806,18 +1883,369 @@ onBeforeUnmount(() => {
   border: none !important;
 }
 
-/* Specific timeline slider styling */
-.timeline-header {
+/* Bottom Dock: Container holding Legend in bottom-left corner + 3 Blocks in a row */
+.bottom-dock-container {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  z-index: 1000;
+  pointer-events: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.bottom-dock-container::-webkit-scrollbar {
+  height: 4px;
+}
+
+.bottom-dock-container::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.dark .bottom-dock-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Base Card Style for all 4 dock items */
+.dock-card {
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 185px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark .dock-card {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* Card Header */
+.dock-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  padding: 7px 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  user-select: none;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.dock-card.collapsed {
+  height: 38px !important;
+}
+
+.dock-card.collapsed .dock-card-header {
+  height: 100%;
+  padding: 0 12px;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  border-bottom: none;
+}
+
+.dock-card.collapsed .legend-title-group,
+.dock-card.collapsed .header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dock-card-header.clickable {
+  cursor: pointer;
+}
+
+.dock-icon {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.header-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dock-toggle-btn {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.dock-toggle-btn:hover {
+  color: #0f172a;
+}
+
+.dark .dock-toggle-btn:hover {
+  color: #f8fafc;
+}
+
+.dock-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #475569;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.title-short {
+  display: none;
+}
+
+.title-full {
+  display: inline;
+}
+
+.dark .dock-card-title {
+  color: #94a3b8;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.count-badge {
+  background: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.dark .count-badge {
+  background: rgba(59, 130, 246, 0.25);
+  color: #60a5fa;
+}
+
+/* Block 0: Trade Legend Card (Positioned in bottom-left corner) */
+.legend-card {
+  width: 215px;
+}
+
+.legend-card.collapsed {
+  width: 155px;
+  height: 38px;
+}
+
+.legend-header {
+  cursor: pointer;
+}
+
+.legend-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.legend-icon {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.legend-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #0f172a;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.dark .legend-title {
+  color: #f8fafc;
+}
+
+.legend-toggle-btn {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.legend-body {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.solid-cali-swatch {
+  background: #ca8a04;
+  border: 1.5px solid #854d0e;
+}
+
+.legend-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.legend-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.dark .legend-label {
+  color: #f1f5f9;
+}
+
+.legend-sub {
+  font-size: 9.5px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.dark .legend-sub {
+  color: #94a3b8;
+}
+
+/* Block 1: Timeline Card */
+.timeline-card {
+  width: 375px;
+}
+
+.timeline-card.collapsed {
+  width: 375px;
+}
+
+.timeline-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.timeline-prefix {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.dark .timeline-prefix {
+  color: #94a3b8;
 }
 
 .highlight-year {
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 800;
   color: #f59e0b;
+  line-height: 1;
+}
+
+.action-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.reset-btn {
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.2s ease;
+  line-height: 1;
+  white-space: nowrap !important;
+  flex-shrink: 0;
+}
+
+.reset-btn:hover {
+  background: #475569;
+  color: #ffffff;
+  border-color: #475569;
+}
+
+.dark .reset-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.dark .reset-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
 }
 
 .play-btn {
@@ -1826,10 +2254,15 @@ onBeforeUnmount(() => {
   border: none;
   font-size: 11px;
   font-weight: 700;
-  padding: 6px 12px;
+  padding: 4px 10px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  white-space: nowrap !important;
+  flex-shrink: 0;
 }
 
 .play-btn.playing {
@@ -1837,8 +2270,44 @@ onBeforeUnmount(() => {
   color: white;
 }
 
+.screenshot-btn {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+  line-height: 1;
+  white-space: nowrap !important;
+  flex-shrink: 0;
+}
+
+.screenshot-btn:hover:not(:disabled) {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.screenshot-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.timeline-card-body {
+  padding: 22px 14px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+}
+
 .slider-container {
-  padding: 8px 4px;
+  padding: 0 4px;
 }
 
 .timeline-slider {
@@ -1852,34 +2321,105 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   font-size: 10px;
   color: #64748b;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
-.partner-card .icon {
-  font-size: 16px;
+/* Block 2: Trading Partners Card */
+.partners-card {
+  width: 300px;
+}
+
+.partners-card.collapsed {
+  width: 205px;
+}
+
+.partners-scroll-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+
+.partners-card .location-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.partners-card .location-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.02);
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.dark .partners-card .location-card {
+  background: rgba(255, 255, 255, 0.03);
+  color: #cbd5e1;
+}
+
+.partners-card .location-card:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.25);
+  transform: translateY(-1px);
+}
+
+.partners-card .location-info {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.partners-card .icon {
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(245, 158, 11, 0.15);
   color: #f59e0b;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  flex-shrink: 0;
+  margin-right: 8px;
 }
 
-.no-data-msg {
-  text-align: center;
-  font-size: 12px;
-  color: #64748b;
-  padding: 24px 0;
+.partners-card .card-details {
+  flex: 1;
+  min-width: 0;
 }
 
-/* Badge Styles for Imports/Exports List */
-.partner-title-row {
+.partners-card .partner-title-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
+}
+
+.partners-card .loc-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.partners-card .loc-coords {
+  margin: 1px 0 0 0;
+  font-size: 9.5px;
+  font-family: monospace;
+  color: #64748b;
+}
+
+.dark .partners-card .loc-coords {
+  color: #94a3b8;
 }
 
 .trade-badges {
@@ -1888,9 +2428,9 @@ onBeforeUnmount(() => {
 }
 
 .badge {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
   text-transform: uppercase;
 }
@@ -1913,203 +2453,250 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
-/* Floating Map Legend Card Styles */
-.map-legend-card {
-  position: absolute;
-  bottom: 24px;
-  left: 24px;
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(12px) saturate(150%);
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
-  z-index: 1000;
-  width: 236px;
-  overflow: hidden;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  pointer-events: auto;
+.no-data-msg {
+  text-align: center;
+  font-size: 11.5px;
+  color: #64748b;
+  padding: 24px 8px;
 }
 
-.dark .map-legend-card {
-  background: rgba(15, 23, 42, 0.92);
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+/* Block 3: Connections Analytics Card */
+.analytics-card {
+  width: 260px;
 }
 
-.legend-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  user-select: none;
-  background: rgba(0, 0, 0, 0.02);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  transition: background 0.2s ease;
+.analytics-card.collapsed {
+  width: 215px;
 }
 
-.legend-header:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.dark .legend-header {
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-.dark .legend-header:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.legend-title-group {
+.analytics-body {
+  flex: 1;
   display: flex;
   align-items: center;
+  padding: 8px 10px;
+}
+
+.analytics-card .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+  width: 100%;
 }
 
-.legend-icon {
-  font-size: 13px;
+.analytics-card .stat-box {
+  text-align: center;
+  padding: 12px 3px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
 }
 
-.legend-title {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: #0f172a;
+.dark .analytics-card .stat-box {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.05);
 }
 
-.dark .legend-title {
-  color: #f8fafc;
+.analytics-card .stat-val {
+  font-size: 20px;
+  font-weight: 800;
+  color: #3b82f6;
+  display: block;
 }
 
-.legend-toggle-btn {
-  background: transparent;
-  border: none;
-  font-size: 10px;
+.dark .analytics-card .stat-val {
+  color: #60a5fa;
+}
+
+.analytics-card .stat-label {
+  font-size: 8.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   color: #64748b;
-  cursor: pointer;
-  padding: 2px 4px;
+  margin-top: 4px;
+  display: block;
 }
 
-.legend-body {
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.legend-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.solid-cali-swatch {
-  background: #ca8a04;
-  border: 1.5px solid #854d0e;
-}
-
-.legend-text {
-  display: flex;
-  flex-direction: column;
-}
-
-.legend-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: #1e293b;
-  line-height: 1.2;
-}
-
-.dark .legend-label {
-  color: #f1f5f9;
-}
-
-.legend-sub {
-  font-size: 10px;
-  color: #64748b;
-  line-height: 1.2;
-}
-
-.dark .legend-sub {
+.dark .analytics-card .stat-label {
   color: #94a3b8;
 }
 
-.mobile-legend-backdrop {
-  display: none;
-}
-
 @media (max-width: 768px) {
-  .mobile-legend-backdrop {
-    display: block;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: 2150;
-    background: rgba(0, 0, 0, 0.25);
-    backdrop-filter: blur(2px);
-  }
-
-  /* Fixed to top-left on mobile, positioned neatly below the Leaflet zoom (+/-) buttons */
-  .map-legend-card {
-    position: fixed;
-    top: 94px;
-    bottom: auto;
-    left: 12px;
-    width: auto;
-    min-width: 108px;
-    max-width: 260px;
-    z-index: 2200; /* Above bottom sheet drawer (z: 2000) and backdrop (z: 2150) */
-    border-radius: 20px;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
-  }
-
-  .map-legend-card.collapsed .legend-header {
-    padding: 6px 12px;
-    border-bottom: none;
-    background: transparent;
-  }
-
-  .map-legend-card.collapsed .legend-title {
-    font-size: 11px;
-  }
-
-  .map-legend-card:not(.collapsed) {
-    border-radius: 14px;
-    width: 240px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-  }
-
-  .map-legend-card:not(.collapsed) .legend-header {
-    padding: 8px 12px;
-  }
-
-  .map-legend-card:not(.collapsed) .legend-body {
-    padding: 8px 12px 10px 12px;
+  .bottom-dock-container {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom, 8px));
     gap: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    pointer-events: auto;
+    overflow: visible;
+    padding-bottom: 0;
   }
 
-  .map-legend-card:not(.collapsed) .legend-swatch {
-    width: 18px;
-    height: 18px;
+  /* When collapsed on mobile, cards form a clean 4-tab bar along the bottom */
+  .dock-card.collapsed {
+    order: 2;
+    flex: 1 1 calc(25% - 6px);
+    min-width: 0;
+    max-width: 100%;
+    width: auto !important;
+    height: 38px !important;
+    pointer-events: auto;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   }
 
-  .map-legend-card:not(.collapsed) .legend-label {
+  .dock-card.collapsed .dock-card-header {
+    height: 100%;
+    padding: 0 4px;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    border-bottom: none;
+  }
+
+  .dock-card.collapsed .legend-title-group,
+  .dock-card.collapsed .header-title-row,
+  .dock-card.collapsed .timeline-title-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .dock-card.collapsed .title-full {
+    display: none;
+  }
+
+  .dock-card.collapsed .title-short {
+    display: inline;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+
+  .dock-card.collapsed .dock-icon,
+  .dock-card.collapsed .legend-icon {
+    font-size: 12px;
+  }
+
+  .dock-card.collapsed .count-badge {
+    padding: 1px 4px;
+    font-size: 9px;
+  }
+
+  /* In collapsed timeline card on mobile, hide Play/JPEG and 'YEAR:' prefix, just show '⏱️ 1769' */
+  .dock-card.collapsed.timeline-card .timeline-prefix,
+  .dock-card.collapsed.timeline-card .header-right-actions {
+    display: none;
+  }
+
+  .dock-card.collapsed.timeline-card .highlight-year {
+    font-size: 12.5px;
+    font-weight: 800;
+  }
+
+  /* Hide toggle arrows on collapsed cards on mobile to save space */
+  .dock-card.collapsed .dock-toggle-btn,
+  .dock-card.collapsed .legend-toggle-btn {
+    display: none;
+  }
+
+  /* THE EXPANDED CARD on mobile spans the full width and appears above the collapsed tabs */
+  .dock-card:not(.collapsed) {
+    order: 1;
+    flex: 0 0 100%;
+    width: 100% !important;
+    max-width: 100% !important;
+    pointer-events: auto;
+    border-radius: 14px;
+    margin-bottom: 2px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  }
+
+  .dock-card:not(.collapsed) .title-full {
+    display: inline;
+  }
+
+  .dock-card:not(.collapsed) .title-short {
+    display: none;
+  }
+
+  .dock-card:not(.collapsed) .dock-toggle-btn,
+  .dock-card:not(.collapsed) .legend-toggle-btn {
+    display: inline-flex;
+    font-size: 12px;
+    padding: 4px 6px;
+  }
+
+  /* Expanded Timeline Card on mobile */
+  .timeline-card:not(.collapsed) {
+    height: 165px;
+  }
+
+  .timeline-card:not(.collapsed) .timeline-header {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .timeline-card:not(.collapsed) .timeline-prefix {
+    display: none;
+  }
+
+  .timeline-card:not(.collapsed) .action-btn-group {
+    gap: 4px;
+  }
+
+  .timeline-card:not(.collapsed) .reset-btn,
+  .timeline-card:not(.collapsed) .play-btn,
+  .timeline-card:not(.collapsed) .screenshot-btn {
+    padding: 4px 6px;
     font-size: 10.5px;
   }
 
-  .map-legend-card:not(.collapsed) .legend-sub {
-    font-size: 9.5px;
+  .timeline-card:not(.collapsed) .timeline-card-body {
+    padding: 14px 12px 10px 12px;
+  }
+
+  /* Expanded Legend Card on mobile (2-column grid layout for compactness) */
+  .legend-card:not(.collapsed) {
+    height: auto;
+    max-height: 210px;
+  }
+
+  .legend-card:not(.collapsed) .legend-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  /* Expanded Trading Partners Card on mobile */
+  .partners-card:not(.collapsed) {
+    height: 220px;
+  }
+
+  .partners-card:not(.collapsed) .partners-scroll-body {
+    padding: 6px 10px;
+  }
+
+  /* Expanded Connections Analytics Card on mobile */
+  .analytics-card:not(.collapsed) {
+    height: 135px;
+  }
+
+  .analytics-card:not(.collapsed) .stat-val {
+    font-size: 18px;
+  }
+
+  .analytics-card:not(.collapsed) .stat-label {
+    font-size: 8px;
   }
 }
 
