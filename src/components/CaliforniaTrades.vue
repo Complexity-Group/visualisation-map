@@ -381,6 +381,7 @@ const combinedPartners = computed(() => {
 
 
 const osmTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const worldBounds: [[number, number], [number, number]] = [[-59, -180], [83, 180]];
 
 const setTileLayer = () => {
   if (!mapObject.value) return;
@@ -395,7 +396,7 @@ const setTileLayer = () => {
     maxZoom: 18,
     attribution,
     crossOrigin: 'anonymous',
-    bounds: [[-85.0511287798, -180], [85.0511287798, 180]],
+    bounds: worldBounds,
     noWrap: true
   }).addTo(mapObject.value);
 };
@@ -1156,8 +1157,8 @@ const resetViewAndTimeline = () => {
   stopPlay();
   selectedYearIndex.value = 0;
   if (mapObject.value) {
-    const minZ = mapObject.value.getMinZoom ? mapObject.value.getMinZoom() : 2.2;
-    mapObject.value.flyTo([25.0, -80.0], minZ, { duration: 0.8 });
+    const minZ = mapObject.value.getMinZoom ? mapObject.value.getMinZoom() : 2.0;
+    mapObject.value.flyTo([20.0, -70.0], minZ, { duration: 0.8 });
     mapObject.value.closePopup();
   }
 };
@@ -1422,17 +1423,26 @@ watch(combinedPartners, () => {
 onMounted(() => {
   if (!mapContainer.value) return;
 
-  // Initialize Map focused on single world instance excluding Antarctica
+  // Initialize Map strictly locked to world map bounds
   const mapInst = map(mapContainer.value, {
-    minZoom: 2.2,
+    minZoom: 1.5,
     maxZoom: 10,
+    zoomSnap: 0,
     worldCopyJump: false,
-    maxBounds: [[-60, -180], [85, 180]],
-    maxBoundsViscosity: 1.0
-  }).setView([25.0, -80.0], 2.2);
+    maxBounds: worldBounds,
+    maxBoundsViscosity: 1.0,
+    bounceAtZoomLimits: false
+  });
   mapObject.value = mapInst;
 
   setTileLayer();
+
+  // Compute exact minZoom so the map completely covers the viewport without blank margins or Antarctica
+  mapInst.invalidateSize({ animate: false });
+  const computedMinZoom = Math.max(mapInst.getBoundsZoom(worldBounds, true) + 0.02, 1.5);
+  mapInst.setMinZoom(computedMinZoom);
+  mapInst.setMaxBounds(worldBounds);
+  mapInst.setView([20.0, -70.0], computedMinZoom);
 
   const dockEl = document.querySelector('.bottom-dock-container') as HTMLElement | null;
   if (dockEl) {
@@ -1589,6 +1599,12 @@ watch([() => props.title, activeYear], () => {
 const handleResize = () => {
   if (mapObject.value) {
     mapObject.value.invalidateSize({ animate: false });
+    const dynamicMinZoom = Math.max(mapObject.value.getBoundsZoom(worldBounds, true) + 0.02, 1.5);
+    mapObject.value.setMinZoom(dynamicMinZoom);
+    mapObject.value.setMaxBounds(worldBounds);
+    if (mapObject.value.getZoom() < dynamicMinZoom) {
+      mapObject.value.setZoom(dynamicMinZoom);
+    }
   }
 };
 
