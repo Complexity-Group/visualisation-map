@@ -10,8 +10,8 @@
 import { ref } from 'vue';
 import CaliforniaTrades from './components/CaliforniaTrades.vue';
 
-// Active dataset view tab selection ('sources' | 'uses')
-const activeTab = ref<'sources' | 'uses'>('sources');
+// Active dataset view tab selection ('sources' | 'uses' | 'sources-no-food')
+const activeTab = ref<'sources' | 'uses' | 'sources-no-food'>('sources');
 </script>
 
 <template>
@@ -29,11 +29,20 @@ const activeTab = ref<'sources' | 'uses'>('sources');
       />
       <!-- Energy Uses Tab: Uses the Energy Uses XLSX Google Sheet URL -->
       <CaliforniaTrades 
-        v-else 
+        v-else-if="activeTab === 'uses'" 
         key="uses"
         activeTab="uses"
         dataSource="https://docs.google.com/spreadsheets/d/1rYqMxqs9HRAnR76y_7wgg37UDHAlLTCB7wxeUm1m4uU/export?format=xlsx"
         title="Energy Uses"
+        @switchTab="(tab) => activeTab = tab"
+      />
+      <!-- California's Energy Sources w/out Food Tab: Uses the Energy Sources w/out Food XLSX Google Sheet URL -->
+      <CaliforniaTrades 
+        v-else-if="activeTab === 'sources-no-food'" 
+        key="sources-no-food"
+        activeTab="sources-no-food"
+        dataSource="https://docs.google.com/spreadsheets/d/11ZViEDH8fEWB5QSJ4gkBNP7hBuBHTpBEYF6DclZurWE/export?format=xlsx"
+        title="California's Energy Sources w/out Food"
         @switchTab="(tab) => activeTab = tab"
       />
     </div>

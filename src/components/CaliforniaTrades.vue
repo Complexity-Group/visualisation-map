@@ -52,11 +52,11 @@ import 'leaflet.BigImage/dist/Leaflet.BigImage.min.css';
 const props = defineProps<{
   dataSource: string;
   title: string;
-  activeTab: 'sources' | 'uses';
+  activeTab: 'sources' | 'uses' | 'sources-no-food';
 }>();
 
 const emit = defineEmits<{
-  (e: 'switchTab', tab: 'sources' | 'uses'): void;
+  (e: 'switchTab', tab: 'sources' | 'uses' | 'sources-no-food'): void;
 }>();
 // Excel data structure
 class SheetColumnData {
@@ -95,18 +95,160 @@ const geoCoordinates: Record<string, [number, number]> = {
 const worldGeoJson = ref<any>(null);
 const usStatesGeoJson = ref<any>(null);
 
-const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: string }> = {
-  'hawaii': { type: 'state', name: 'Hawaii' },
-  'united states, massachussetts': { type: 'state', name: 'Massachusetts' },
-  'united states, colorado': { type: 'state', name: 'Colorado' },
-  'united states, new york': { type: 'state', name: 'New York' },
-  'united states, illinois': { type: 'state', name: 'Illinois' },
-  'united states, pennsylvania': { type: 'state', name: 'Pennsylvania' },
-  'united states, oregon': { type: 'state', name: 'Oregon' },
-  'united states, nevada': { type: 'state', name: 'Nevada' },
-  'united states, minnesota': { type: 'state', name: 'Minnesota' },
-  'united states, utah': { type: 'state', name: 'Utah' },
+// 2-Letter US State & Territory Postal Codes
+const US_STATE_CODES: Record<string, string> = {
+  'al': 'Alabama', 'ak': 'Alaska', 'az': 'Arizona', 'ar': 'Arkansas', 'ca': 'California',
+  'co': 'Colorado', 'ct': 'Connecticut', 'de': 'Delaware', 'dc': 'District of Columbia',
+  'fl': 'Florida', 'ga': 'Georgia', 'hi': 'Hawaii', 'id': 'Idaho', 'il': 'Illinois',
+  'in': 'Indiana', 'ia': 'Iowa', 'ks': 'Kansas', 'ky': 'Kentucky', 'la': 'Louisiana',
+  'me': 'Maine', 'md': 'Maryland', 'ma': 'Massachusetts', 'mi': 'Michigan', 'mn': 'Minnesota',
+  'ms': 'Mississippi', 'mo': 'Missouri', 'mt': 'Montana', 'ne': 'Nebraska', 'nv': 'Nevada',
+  'nh': 'New Hampshire', 'nj': 'New Jersey', 'nm': 'New Mexico', 'ny': 'New York',
+  'nc': 'North Carolina', 'nd': 'North Dakota', 'oh': 'Ohio', 'ok': 'Oklahoma', 'or': 'Oregon',
+  'pa': 'Pennsylvania', 'ri': 'Rhode Island', 'sc': 'South Carolina', 'sd': 'South Dakota',
+  'tn': 'Tennessee', 'tx': 'Texas', 'ut': 'Utah', 'vt': 'Vermont', 'va': 'Virginia',
+  'wa': 'Washington', 'wv': 'West Virginia', 'wi': 'Wisconsin', 'wy': 'Wyoming', 'pr': 'Puerto Rico'
+};
 
+// Historical Ports, Key Cities, Regions, Archaic Names, and Common Misspellings
+const US_STATE_ALIASES: Record<string, string> = {
+  // Cities / Ports / Regions
+  'boston': 'Massachusetts',
+  'charleston': 'South Carolina',
+  'atlantic states': 'Maryland',
+  'new york city': 'New York',
+  'nyc': 'New York',
+  'manhattan': 'New York',
+  'philadelphia': 'Pennsylvania',
+  'chicago': 'Illinois',
+  'detroit': 'Michigan',
+  'seattle': 'Washington',
+  'portland': 'Oregon',
+  'new orleans': 'Louisiana',
+  'baltimore': 'Maryland',
+  'honolulu': 'Hawaii',
+  'anchorage': 'Alaska',
+  'cincinnati': 'Ohio',
+
+  // Common Misspellings and Historical Territorial Designations
+  'massachussetts': 'Massachusetts',
+  'massachusettes': 'Massachusetts',
+  'massachusets': 'Massachusetts',
+  'massachusetts bay': 'Massachusetts',
+  'virigina': 'Virginia',
+  'virgina': 'Virginia',
+  'west virginia': 'West Virginia',
+  'pennsylvania': 'Pennsylvania',
+  'pensylvania': 'Pennsylvania',
+  'pencilvania': 'Pennsylvania',
+  'pennsylvannia': 'Pennsylvania',
+  'louisiana': 'Louisiana',
+  'louisana': 'Louisiana',
+  'louisisana': 'Louisiana',
+  'mississippi': 'Mississippi',
+  'mississipi': 'Mississippi',
+  'misisipi': 'Mississippi',
+  'connecticut': 'Connecticut',
+  'conneticut': 'Connecticut',
+  'connecticutt': 'Connecticut',
+  'tennessee': 'Tennessee',
+  'tenesse': 'Tennessee',
+  'tenessee': 'Tennessee',
+  'hawaii': 'Hawaii',
+  'hawai\'i': 'Hawaii',
+  'hawai': 'Hawaii',
+  'sandwich islands': 'Hawaii',
+  'illinois': 'Illinois',
+  'illinios': 'Illinois',
+  'illonois': 'Illinois',
+  'wisconsin': 'Wisconsin',
+  'wisconson': 'Wisconsin',
+  'wisconcin': 'Wisconsin',
+  'california': 'California',
+  'calafornia': 'California',
+  'califonia': 'California',
+  'arkansas': 'Arkansas',
+  'arkensas': 'Arkansas',
+  'arkansa': 'Arkansas',
+  'minnesota': 'Minnesota',
+  'minisota': 'Minnesota',
+  'minisotta': 'Minnesota',
+  'missouri': 'Missouri',
+  'missourri': 'Missouri',
+  'rhode island': 'Rhode Island',
+  'rhode island and providence plantations': 'Rhode Island',
+  'north carolina': 'North Carolina',
+  'south carolina': 'South Carolina',
+  'north dakota': 'North Dakota',
+  'south dakota': 'South Dakota',
+  'new hampshire': 'New Hampshire',
+  'new jersey': 'New Jersey',
+  'new mexico': 'New Mexico',
+  'new york': 'New York',
+  'district of columbia': 'District of Columbia',
+  'washington dc': 'District of Columbia',
+  'washington d.c.': 'District of Columbia',
+  'washington, d.c.': 'District of Columbia',
+  'puerto rico': 'Puerto Rico'
+};
+
+// Accurate Geographic Center Coordinates for all 50 States, DC, and Puerto Rico
+const US_STATE_COORDINATES: Record<string, [number, number]> = {
+  'Alabama': [32.806671, -86.791130],
+  'Alaska': [61.370716, -152.404419],
+  'Arizona': [33.729759, -111.431221],
+  'Arkansas': [34.969704, -92.373123],
+  'California': [36.116203, -119.681564],
+  'Colorado': [39.059811, -105.311104],
+  'Connecticut': [41.597782, -72.755371],
+  'Delaware': [39.318523, -75.507141],
+  'District of Columbia': [38.897438, -77.026817],
+  'Florida': [27.766279, -81.686783],
+  'Georgia': [33.040619, -83.643074],
+  'Hawaii': [21.094318, -157.498337],
+  'Idaho': [44.240459, -114.478828],
+  'Illinois': [40.349457, -88.986137],
+  'Indiana': [39.849426, -86.258278],
+  'Iowa': [42.011539, -93.210526],
+  'Kansas': [38.526600, -96.726486],
+  'Kentucky': [37.668140, -84.670067],
+  'Louisiana': [31.169546, -91.867805],
+  'Maine': [44.693947, -69.381927],
+  'Maryland': [39.063946, -76.802101],
+  'Massachusetts': [42.230171, -71.530106],
+  'Michigan': [43.326618, -84.536095],
+  'Minnesota': [45.694454, -93.900192],
+  'Mississippi': [32.741646, -89.678696],
+  'Missouri': [38.456085, -92.288368],
+  'Montana': [46.921925, -110.454353],
+  'Nebraska': [41.125370, -98.268082],
+  'Nevada': [38.313515, -117.055374],
+  'New Hampshire': [43.452492, -71.563896],
+  'New Jersey': [40.298904, -74.521011],
+  'New Mexico': [34.840515, -106.248482],
+  'New York': [42.165726, -74.948051],
+  'North Carolina': [35.630066, -79.806419],
+  'North Dakota': [47.528912, -99.784012],
+  'Ohio': [40.388783, -82.764915],
+  'Oklahoma': [35.565342, -96.928917],
+  'Oregon': [44.572021, -122.070938],
+  'Pennsylvania': [40.590752, -77.209755],
+  'Puerto Rico': [18.220833, -66.590149],
+  'Rhode Island': [41.680893, -71.511780],
+  'South Carolina': [33.856892, -80.945007],
+  'South Dakota': [44.299782, -99.438828],
+  'Tennessee': [35.747845, -86.692345],
+  'Texas': [31.054487, -97.563461],
+  'Utah': [40.150032, -111.862434],
+  'Vermont': [44.045876, -72.710686],
+  'Virginia': [37.769337, -78.169968],
+  'Washington': [47.400902, -121.490494],
+  'West Virginia': [38.491226, -80.954453],
+  'Wisconsin': [44.268543, -89.616508],
+  'Wyoming': [42.755966, -107.302490]
+};
+
+const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: string }> = {
   'korea, south': { type: 'country', name: 'South Korea' },
   'korea, north': { type: 'country', name: 'North Korea' },
   'china, canton': { type: 'country', name: 'China' },
@@ -156,106 +298,294 @@ const tradePartnerToGeoJson: Record<string, { type: 'country' | 'state'; name: s
   'netherlands antilles': { type: 'country', name: 'Netherlands' },
   'serbia and montenegro (aug 2003 - dec 2006)': { type: 'country', name: 'Serbia' },
   'micronesia (federated states of)': { type: 'country', name: 'Micronesia' },
-  'syrian arab republic': { type: 'country', name: 'Syria' },
-
-  // New US State/Territory mappings for energy datasets
-  'united states - massachussetts': { type: 'state', name: 'Massachusetts' },
-  'united states - massachusettes': { type: 'state', name: 'Massachusetts' },
-  'united states - virigina': { type: 'state', name: 'Virginia' },
-  'united states - boston': { type: 'state', name: 'Massachusetts' },
-  'united states - charleston': { type: 'state', name: 'South Carolina' },
-  'united states - atlantic states': { type: 'state', name: 'Maryland' },
-  'united staes - alabama': { type: 'state', name: 'Alabama' },
-  'united states - samoa': { type: 'country', name: 'Samoa' },
-  'united states - guam': { type: 'country', name: 'Guam' },
-  'united states - american samoa': { type: 'country', name: 'American Samoa' },
-  'united states territory - american samoa': { type: 'country', name: 'American Samoa' },
-  'united states territory - guam': { type: 'country', name: 'Guam' },
-  'united states territory - puerto rico': { type: 'state', name: 'Puerto Rico' }
+  'syrian arab republic': { type: 'country', name: 'Syria' }
 };
 
-const getGeoJsonFeature = (partnerName: string) => {
+// Levenshtein edit distance for fault-tolerant fuzzy spelling matching
+const levenshteinDistance = (a: string, b: string): number => {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix: number[][] = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+};
+
+// Robust Matcher for US State Names across all naming formats, misspellings, and abbreviations
+const matchToStateName = (candidate: string, hasExplicitUsContext: boolean): string | null => {
+  if (!candidate || !usStatesGeoJson.value) return null;
+  const raw = candidate.trim().toLowerCase();
+  if (!raw) return null;
+
+  // 1. Direct state name match against loaded GeoJSON features
+  for (const f of usStatesGeoJson.value.features) {
+    const name = f.properties.name;
+    if (raw === name.toLowerCase()) {
+      // Disambiguation: Standalone 'Georgia' without explicit US indicator defaults to sovereign country Georgia
+      if (name.toLowerCase() === 'georgia' && !hasExplicitUsContext) {
+        return null;
+      }
+      return name;
+    }
+  }
+
+  // 2. 2-Letter state abbreviation (active when explicit US prefix/suffix exists or code length is 2)
+  if (hasExplicitUsContext && raw.length === 2 && US_STATE_CODES[raw]) {
+    return US_STATE_CODES[raw];
+  }
+
+  // 3. Known historical aliases, port cities, and common misspellings
+  if (US_STATE_ALIASES[raw]) {
+    const matched = US_STATE_ALIASES[raw];
+    if (matched.toLowerCase() === 'georgia' && !hasExplicitUsContext) {
+      return null;
+    }
+    return matched;
+  }
+
+  // 4. Strip administrative prefixes & suffixes (e.g. 'State of Washington' -> 'Washington')
+  const stripped = raw
+    .replace(/^(?:state\s+of|commonwealth\s+of|territory\s+of)\s+/i, '')
+    .replace(/\bterritory\b/g, '')
+    .replace(/\bstate\b/g, '')
+    .replace(/\bcommonwealth\b/g, '')
+    .replace(/\b(bay|colony|district)\b/g, '')
+    .trim();
+
+  if (stripped && stripped !== raw) {
+    const match = matchToStateName(stripped, hasExplicitUsContext);
+    if (match) return match;
+  }
+
+  // 5. Fault-tolerant fuzzy matching against all 52 US state features
+  let bestMatch: string | null = null;
+  let minDistance = 999;
+  for (const f of usStatesGeoJson.value.features) {
+    const target = (f.properties.name || '').toLowerCase();
+    const maxAllowed = target.length >= 8 ? 2 : (target.length >= 5 ? 1 : 0);
+    const dist = levenshteinDistance(raw, target);
+    if (dist <= maxAllowed && dist < minDistance) {
+      minDistance = dist;
+      bestMatch = f.properties.name;
+    }
+  }
+
+  if (bestMatch) {
+    if (bestMatch.toLowerCase() === 'georgia' && !hasExplicitUsContext) {
+      return null;
+    }
+    return bestMatch;
+  }
+
+  return null;
+};
+
+// High-performance cache for resolved GeoJSON features ensuring 0ms overhead on repeated lookups
+const featureResolutionCache = new Map<string, { type: 'country' | 'state'; feature: any } | null>();
+
+/**
+ * Robust GeoJSON Feature Resolver:
+ * Correctly identifies all US states regardless of format, typos, punctuation, or sheet conventions.
+ */
+const getGeoJsonFeature = (partnerName: string): { type: 'country' | 'state'; feature: any } | null => {
+  if (!partnerName) return null;
+  if (!worldGeoJson.value || !usStatesGeoJson.value) return null;
+
+  if (featureResolutionCache.has(partnerName)) {
+    return featureResolutionCache.get(partnerName) || null;
+  }
+
   const cleanName = partnerName.trim();
   const lowerName = cleanName.toLowerCase().replace(/\s+/g, ' ');
 
-  const mapping = tradePartnerToGeoJson[lowerName];
-
-  let type: 'country' | 'state';
-  let geoQuery: string;
-
-  if (mapping) {
-    type = mapping.type;
-    geoQuery = mapping.name;
-  } else {
-    // Default dynamic rules
-    let baseName = cleanName;
-    if (baseName.includes('(')) {
-      baseName = baseName.split('(')[0].trim();
-    }
-
-    const isUsStateOrTerritory = 
-      baseName.startsWith('United States Territory -') ||
-      baseName.startsWith('United States -') ||
-      baseName.startsWith('United States,') ||
-      baseName.startsWith('United Staes -') ||
-      baseName === 'Hawaii' ||
-      baseName === 'Alaska';
-
-    if (isUsStateOrTerritory) {
-      type = 'state';
-      geoQuery = baseName
-        .replace(/^United States Territory -/, '')
-        .replace(/^United States -/, '')
-        .replace(/^United States,/, '')
-        .replace(/^United Staes -/, '')
-        .trim();
+  // Direct manual overrides for international territories/colonies
+  const manual = tradePartnerToGeoJson[lowerName];
+  if (manual) {
+    if (manual.type === 'state') {
+      const feat = usStatesGeoJson.value.features.find((f: any) => f.properties.name.toLowerCase() === manual.name.toLowerCase());
+      if (feat) {
+        const res = { type: 'state' as const, feature: feat };
+        featureResolutionCache.set(partnerName, res);
+        return res;
+      }
     } else {
-      type = 'country';
-      geoQuery = baseName;
-      if (geoQuery.includes(',')) {
-        geoQuery = geoQuery.split(',')[0].trim();
-      }
-    }
-  }
-
-  if (type === 'state') {
-    if (geoQuery.toLowerCase().includes('massachus')) {
-      geoQuery = 'Massachusetts';
-    }
-    if (usStatesGeoJson.value) {
-      const feature = usStatesGeoJson.value.features.find((f: any) =>
-        f.properties.name.toLowerCase() === geoQuery.toLowerCase() ||
-        geoQuery.toLowerCase().includes(f.properties.name.toLowerCase()) ||
-        f.properties.name.toLowerCase().includes(geoQuery.toLowerCase())
+      const feat = worldGeoJson.value.features.find((f: any) => 
+        (f.properties.NAME || '').toLowerCase() === manual.name.toLowerCase() ||
+        (f.properties.NAME_LONG || '').toLowerCase() === manual.name.toLowerCase() ||
+        (f.properties.ADMIN || '').toLowerCase() === manual.name.toLowerCase()
       );
-      if (feature) return { type: 'state' as const, feature };
-    }
-  } else {
-    if (worldGeoJson.value) {
-      const query = geoQuery.toLowerCase();
-      // Pass 1: exact matches
-      let feature = worldGeoJson.value.features.find((f: any) => {
-        const name = (f.properties.NAME || '').toLowerCase();
-        const longName = (f.properties.NAME_LONG || '').toLowerCase();
-        const admin = (f.properties.ADMIN || '').toLowerCase();
-        return name === query || longName === query || admin === query;
-      });
-
-      // Pass 2: substring matches
-      if (!feature) {
-        feature = worldGeoJson.value.features.find((f: any) => {
-          const name = (f.properties.NAME || '').toLowerCase();
-          const longName = (f.properties.NAME_LONG || '').toLowerCase();
-          return query.includes(name) ||
-                 query.includes(longName) ||
-                 name.includes(query) ||
-                 longName.includes(query);
-        });
+      if (feat) {
+        const res = { type: 'country' as const, feature: feat };
+        featureResolutionCache.set(partnerName, res);
+        return res;
       }
-      if (feature) return { type: 'country' as const, feature };
     }
   }
 
+  // Normalize dashes, spaces, and punctuation
+  const normalized = cleanName
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015]/g, '-')
+    .replace(/\s+/g, ' ');
+
+  const lower = normalized.toLowerCase();
+
+  // US overseas territories mapped to country polygons in countries.geojson
+  if (lower.includes('american samoa')) {
+    const feat = worldGeoJson.value.features.find((f: any) => f.properties.NAME === 'American Samoa');
+    if (feat) {
+      const res = { type: 'country' as const, feature: feat };
+      featureResolutionCache.set(partnerName, res);
+      return res;
+    }
+  }
+  if (lower.includes('guam')) {
+    const feat = worldGeoJson.value.features.find((f: any) => f.properties.NAME === 'Guam');
+    if (feat) {
+      const res = { type: 'country' as const, feature: feat };
+      featureResolutionCache.set(partnerName, res);
+      return res;
+    }
+  }
+  if (lower.includes('northern mariana') || lower.includes('mariana islands')) {
+    const feat = worldGeoJson.value.features.find((f: any) => f.properties.NAME === 'Northern Mariana Islands');
+    if (feat) {
+      const res = { type: 'country' as const, feature: feat };
+      featureResolutionCache.set(partnerName, res);
+      return res;
+    }
+  }
+  if (lower === 'united states - samoa') {
+    const feat = worldGeoJson.value.features.find((f: any) => f.properties.NAME === 'Samoa');
+    if (feat) {
+      const res = { type: 'country' as const, feature: feat };
+      featureResolutionCache.set(partnerName, res);
+      return res;
+    }
+  }
+
+  // Regex patterns to detect US prefixes, suffixes, typos, and formatting variants
+  const usPrefixRegex = /^(?:the\s+)?(?:united\s+states?(?:\s+of\s+america)?|united\s+staes|untied\s+states|unites\s+states|u\.?\s*s\.?\s*a?\.?)(?:\s+territory|\s+state|\s+colony)?\s*[-:,/_\s]\s*/i;
+  const usSuffixRegex = /\s*[-:,/_\s]\s*(?:(?:the\s+)?(?:united\s+states?(?:\s+of\s+america)?|united\s+staes|untied\s+states|u\.?\s*s\.?\s*a?\.?))$/i;
+  const stateOfPrefixRegex = /^(?:state\s+of|commonwealth\s+of|territory\s+of)\s+/i;
+
+  let hasExplicitUsContext = false;
+  let candidate = '';
+
+  // Extract candidate state name from parentheses or prefixes/suffixes
+  if (normalized.includes('(') && normalized.includes(')')) {
+    const inParen = normalized.match(/\(([^)]+)\)/)?.[1]?.trim() || '';
+    const outParen = normalized.replace(/\([^)]+\)/g, '').trim();
+    if (/^(?:the\s+)?(?:united\s+states?(?:\s+of\s+america)?|united\s+staes|untied\s+states|usa|u\.s\.|us|u\.s\.a\.)$/i.test(inParen)) {
+      hasExplicitUsContext = true;
+      candidate = outParen;
+    } else if (/^(?:the\s+)?(?:united\s+states?(?:\s+of\s+america)?|united\s+staes|untied\s+states|usa|u\.s\.|us|u\.s\.a\.)$/i.test(outParen)) {
+      hasExplicitUsContext = true;
+      candidate = inParen;
+    } else {
+      candidate = outParen;
+    }
+  } else if (usPrefixRegex.test(normalized)) {
+    hasExplicitUsContext = true;
+    candidate = normalized.replace(usPrefixRegex, '').trim();
+  } else if (usSuffixRegex.test(normalized)) {
+    hasExplicitUsContext = true;
+    candidate = normalized.replace(usSuffixRegex, '').trim();
+  } else if (stateOfPrefixRegex.test(normalized)) {
+    hasExplicitUsContext = true;
+    candidate = normalized.replace(stateOfPrefixRegex, '').trim();
+  } else {
+    candidate = normalized;
+  }
+
+  // Clean trailing/leading delimiters and parentheses
+  candidate = candidate.replace(/^[-:,/_\s()]+|[-:,/_\s()]+$/g, '').trim();
+
+  // Try matching candidate as a US State
+  const stateMatch = matchToStateName(candidate, hasExplicitUsContext);
+  if (stateMatch) {
+    const feature = usStatesGeoJson.value.features.find((f: any) => f.properties.name === stateMatch);
+    if (feature) {
+      const res = { type: 'state' as const, feature };
+      featureResolutionCache.set(partnerName, res);
+      return res;
+    }
+  }
+
+  // Check if string represents the entire United States country
+  if (/^(?:the\s+)?(?:united\s+states?(?:\s+of\s+america)?|united\s+staes|untied\s+states|u\.?\s*s\.?\s*a?\.?)$/i.test(normalized)) {
+    const usFeature = worldGeoJson.value.features.find((f: any) => f.properties.NAME === 'United States of America');
+    if (usFeature) {
+      const res = { type: 'country' as const, feature: usFeature };
+      featureResolutionCache.set(partnerName, res);
+      return res;
+    }
+  }
+
+  // Fallback to Sovereign World Countries lookup
+  let baseName = candidate || cleanName;
+  if (baseName.includes('(')) {
+    baseName = baseName.split('(')[0].trim();
+  }
+  if (baseName.includes(',')) {
+    baseName = baseName.split(',')[0].trim();
+  }
+  const query = baseName.toLowerCase();
+
+  // Pass 1: exact matches
+  let feature = worldGeoJson.value.features.find((f: any) => {
+    const name = (f.properties.NAME || '').toLowerCase();
+    const longName = (f.properties.NAME_LONG || '').toLowerCase();
+    const admin = (f.properties.ADMIN || '').toLowerCase();
+    return name === query || longName === query || admin === query;
+  });
+
+  // Pass 2: substring matches
+  if (!feature) {
+    feature = worldGeoJson.value.features.find((f: any) => {
+      const name = (f.properties.NAME || '').toLowerCase();
+      const longName = (f.properties.NAME_LONG || '').toLowerCase();
+      return query.includes(name) ||
+             query.includes(longName) ||
+             name.includes(query) ||
+             longName.includes(query);
+    });
+  }
+
+  if (feature) {
+    const res = { type: 'country' as const, feature };
+    featureResolutionCache.set(partnerName, res);
+    return res;
+  }
+
+  featureResolutionCache.set(partnerName, null);
+  return null;
+};
+
+// Helper to look up coordinates for any partner including all US states
+const getPartnerCoordinates = (partnerName: string): [number, number] | null => {
+  if (geoCoordinates[partnerName]) {
+    return geoCoordinates[partnerName];
+  }
+  const res = getGeoJsonFeature(partnerName);
+  if (res && res.type === 'state') {
+    const stateName = res.feature?.properties?.name;
+    if (stateName && US_STATE_COORDINATES[stateName]) {
+      return US_STATE_COORDINATES[stateName];
+    }
+  }
   return null;
 };
 
@@ -1105,7 +1435,7 @@ const captureScreenshot = async () => {
   isCapturing.value = true;
 
   try {
-    const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
+    const sanitizedTitle = props.title ? props.title.replace(/[']/g, '').replace(/[\/\s]+/g, '-') : 'Map-Visualization';
     const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}`;
     bigImageControlInstance.value.options.fileName = fileName;
     bigImageControlInstance.value.options.exportFormat = 'jpeg';
@@ -1195,7 +1525,7 @@ const focusOnLocation = (partnerName: string) => {
   }
 
   // Fallback to static coordinates if mapping fails or layer is not drawn
-  const coords = geoCoordinates[partnerName];
+  const coords = getPartnerCoordinates(partnerName);
   if (coords && mapObject.value) {
     mapObject.value.flyTo(coords, 4, {
       duration: 1.2
@@ -1569,6 +1899,7 @@ onMounted(() => {
 
       worldGeoJson.value = countriesJson;
       usStatesGeoJson.value = statesJson;
+      featureResolutionCache.clear();
       updateMapLayers();
     })
     .catch(err => console.error('Failed to load GeoJSON databases:', err));
@@ -1579,7 +1910,7 @@ onMounted(() => {
     title: 'Export Map as Image',
     downloadTitle: 'Download JPEG',
     exportFormat: 'jpeg',
-    fileName: `${props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization'}-${activeYear.value || 'Map'}`,
+    fileName: `${props.title ? props.title.replace(/[']/g, '').replace(/[\/\s]+/g, '-') : 'Map-Visualization'}-${activeYear.value || 'Map'}`,
     maxScale: 3,
     minScale: 1
   });
@@ -1591,7 +1922,7 @@ onMounted(() => {
 
 watch([() => props.title, activeYear], () => {
   if (bigImageControlInstance.value) {
-    const sanitizedTitle = props.title ? props.title.replace(/\s+/g, '-') : 'Map-Visualization';
+    const sanitizedTitle = props.title ? props.title.replace(/[']/g, '').replace(/[\/\s]+/g, '-') : 'Map-Visualization';
     bigImageControlInstance.value.options.fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}`;
   }
 }, { immediate: true });
@@ -1633,10 +1964,16 @@ onBeforeUnmount(() => {
       <!-- Floating Pill Tab Navigation inside Map View for Perfect Center Positioning -->
       <nav class="floating-tabs-nav">
         <button class="tab-pill-btn" :class="{ active: activeTab === 'sources' }" @click="emit('switchTab', 'sources')">
-          ⚡ Energy Sources
+          <span class="tab-label-full">⚡ Energy Sources</span>
+          <span class="tab-label-short">⚡ Sources</span>
         </button>
         <button class="tab-pill-btn" :class="{ active: activeTab === 'uses' }" @click="emit('switchTab', 'uses')">
-          🏭 Energy Uses
+          <span class="tab-label-full">🏭 Energy Uses</span>
+          <span class="tab-label-short">🏭 Uses</span>
+        </button>
+        <button class="tab-pill-btn" :class="{ active: activeTab === 'sources-no-food' }" @click="emit('switchTab', 'sources-no-food')">
+          <span class="tab-label-full">⚡ Energy Sources w/out Food</span>
+          <span class="tab-label-short">⚡ Sources (No Food)</span>
         </button>
       </nav>
 
@@ -1784,8 +2121,8 @@ onBeforeUnmount(() => {
                           </template>
                         </div>
                       </div>
-                      <p class="loc-coords" v-if="geoCoordinates[partner.name]">
-                        {{ geoCoordinates[partner.name][0].toFixed(2) }}°, {{ geoCoordinates[partner.name][1].toFixed(2) }}°
+                      <p class="loc-coords" v-if="getPartnerCoordinates(partner.name)">
+                        {{ getPartnerCoordinates(partner.name)![0].toFixed(2) }}°, {{ getPartnerCoordinates(partner.name)![1].toFixed(2) }}°
                       </p>
                     </div>
                   </div>
