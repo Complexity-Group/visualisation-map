@@ -1223,15 +1223,17 @@ class CustomBigImageControl extends BigImageControl {
   // Draw clean trade pattern legend onto canvas export reflecting the exact active category
   _renderLegend(ctx: CanvasRenderingContext2D) {
     const category = (this as any).categoryTitle || (this as any).options?.categoryTitle || 'Trade';
-    const boxX = 20;
-    const boxY = 530;
-    const boxW = 295;
-    const boxH = 218;
-    const r = 8;
+    // Compact box positioned cleanly in the South Pacific Ocean (x: 16-200, y: 624-752)
+    // leaving >90px of open water before South America (Chile starts around x: 295+)
+    const boxX = 16;
+    const boxY = 624;
+    const boxW = 184;
+    const boxH = 128;
+    const r = 6;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.16)';
     ctx.lineWidth = 1;
 
     ctx.beginPath();
@@ -1245,70 +1247,80 @@ class CustomBigImageControl extends BigImageControl {
 
     // Header Title
     ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
+    ctx.font = 'bold 10.5px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(`${category} Legend`, boxX + 12, boxY + 24);
+    ctx.textBaseline = 'top';
+    ctx.fillText(category, boxX + 10, boxY + 10);
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '8.5px system-ui, -apple-system, sans-serif';
+    ctx.fillText('Trade Pattern Legend', boxX + 10, boxY + 24);
 
     const items = [
       {
         type: 'stripes',
-        label: `${category} (Imports)`,
-        sub: 'Orange Diagonal Lines',
+        label: 'Imports',
         stroke: '#ea580c'
       },
       {
         type: 'dots',
-        label: `${category} (Exports)`,
-        sub: 'Green Dots',
+        label: 'Exports',
         stroke: '#059669'
       },
       {
         type: 'both',
         label: 'Both (Imports & Exports)',
-        sub: 'Orange Lines + Green Dots',
         stroke: '#059669'
       },
       {
         type: 'cali',
-        label: 'California',
-        sub: 'Main Trade Hub',
+        label: 'California (Trade Hub)',
         fill: '#ca8a04',
         stroke: '#854d0e'
       }
     ];
 
     let itemY = boxY + 38;
+    const swSize = 16;
+    const swRadius = 3;
+
     items.forEach(item => {
-      const swX = boxX + 12;
+      const swX = boxX + 10;
       const swY = itemY;
-      const swSize = 22;
 
       ctx.save();
       if (item.type === 'cali') {
         ctx.fillStyle = item.fill!;
-        ctx.fillRect(swX, swY, swSize, swSize);
+        ctx.beginPath();
+        if (typeof (ctx as any).roundRect === 'function') {
+          (ctx as any).roundRect(swX, swY, swSize, swSize, swRadius);
+        } else {
+          ctx.rect(swX, swY, swSize, swSize);
+        }
+        ctx.fill();
       } else {
         const pat = getCanvasPattern(ctx, item.type as any, '#ea580c', '#059669');
         ctx.fillStyle = pat;
-        ctx.fillRect(swX, swY, swSize, swSize);
+        ctx.beginPath();
+        if (typeof (ctx as any).roundRect === 'function') {
+          (ctx as any).roundRect(swX, swY, swSize, swSize, swRadius);
+        } else {
+          ctx.rect(swX, swY, swSize, swSize);
+        }
+        ctx.fill();
       }
       ctx.strokeStyle = item.stroke;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(swX, swY, swSize, swSize);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
       ctx.restore();
 
       ctx.fillStyle = '#1e293b';
-      ctx.font = 'bold 10.5px system-ui, -apple-system, sans-serif';
+      ctx.font = 'bold 9.5px system-ui, -apple-system, sans-serif';
       ctx.textAlign = 'left';
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText(item.label, swX + swSize + 10, swY + 11);
+      ctx.textBaseline = 'middle';
+      ctx.fillText(item.label, swX + swSize + 6, swY + swSize / 2);
 
-      ctx.fillStyle = '#64748b';
-      ctx.font = '10px system-ui, -apple-system, sans-serif';
-      ctx.fillText(item.sub, swX + swSize + 10, swY + 22);
-
-      itemY += 44;
+      itemY += 21;
     });
 
     ctx.restore();
