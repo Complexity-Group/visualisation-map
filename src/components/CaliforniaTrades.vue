@@ -52,11 +52,11 @@ import 'leaflet.BigImage/dist/Leaflet.BigImage.min.css';
 const props = defineProps<{
   dataSource: string;
   title: string;
-  activeTab: 'sources' | 'uses' | 'sources-no-food';
+  activeTab: 'sources' | 'sources-no-food' | 'uses';
 }>();
 
 const emit = defineEmits<{
-  (e: 'switchTab', tab: 'sources' | 'uses' | 'sources-no-food'): void;
+  (e: 'switchTab', tab: 'sources' | 'sources-no-food' | 'uses'): void;
 }>();
 // Excel data structure
 class SheetColumnData {
@@ -1178,20 +1178,59 @@ class CustomBigImageControl extends BigImageControl {
     (this as any)._renderMarkers?.();
     (this as any)._renderCircles?.();
 
-    // 5. Draw trade pattern legend onto exported canvas
+    // 5. Draw top title header banner onto exported canvas
+    this._renderTitleHeader(ctx);
+
+    // 6. Draw trade pattern legend onto exported canvas
     this._renderLegend(ctx);
   }
 
-  // Draw clean trade pattern legend onto canvas export
+  // Draw elegant top header title banner onto exported canvas
+  _renderTitleHeader(ctx: CanvasRenderingContext2D) {
+    const category = (this as any).categoryTitle || (this as any).options?.categoryTitle || 'California Trade';
+    const year = (this as any).activeYear || (this as any).options?.activeYear || '';
+    const headerText = year ? `${category} (${year})` : category;
+
+    ctx.save();
+    ctx.font = 'bold 15px system-ui, -apple-system, sans-serif';
+    const textMetrics = ctx.measureText(headerText);
+    const bannerW = Math.max(textMetrics.width + 40, 240);
+    const bannerH = 34;
+    const bannerX = (1024 - bannerW) / 2;
+    const bannerY = 16;
+    const r = 17;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.lineWidth = 1;
+
+    ctx.beginPath();
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(bannerX, bannerY, bannerW, bannerH, r);
+    } else {
+      ctx.rect(bannerX, bannerY, bannerW, bannerH);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(headerText, 1024 / 2, bannerY + bannerH / 2);
+    ctx.restore();
+  }
+
+  // Draw clean trade pattern legend onto canvas export reflecting the exact active category
   _renderLegend(ctx: CanvasRenderingContext2D) {
+    const category = (this as any).categoryTitle || (this as any).options?.categoryTitle || 'Trade';
     const boxX = 20;
-    const boxY = 560;
-    const boxW = 230;
-    const boxH = 188;
+    const boxY = 530;
+    const boxW = 295;
+    const boxH = 218;
     const r = 8;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
     ctx.lineWidth = 1;
 
@@ -1207,24 +1246,26 @@ class CustomBigImageControl extends BigImageControl {
     // Header Title
     ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
-    ctx.fillText('Trade Pattern Legend', boxX + 12, boxY + 22);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(`${category} Legend`, boxX + 12, boxY + 24);
 
     const items = [
       {
         type: 'stripes',
-        label: 'Energy Sources (Imports)',
+        label: `${category} (Imports)`,
         sub: 'Orange Diagonal Lines',
         stroke: '#ea580c'
       },
       {
         type: 'dots',
-        label: 'Energy Uses (Exports)',
+        label: `${category} (Exports)`,
         sub: 'Green Dots',
         stroke: '#059669'
       },
       {
         type: 'both',
-        label: 'Both (Import & Export)',
+        label: 'Both (Imports & Exports)',
         sub: 'Orange Lines + Green Dots',
         stroke: '#059669'
       },
@@ -1237,7 +1278,7 @@ class CustomBigImageControl extends BigImageControl {
       }
     ];
 
-    let itemY = boxY + 36;
+    let itemY = boxY + 38;
     items.forEach(item => {
       const swX = boxX + 12;
       const swY = itemY;
@@ -1258,14 +1299,16 @@ class CustomBigImageControl extends BigImageControl {
       ctx.restore();
 
       ctx.fillStyle = '#1e293b';
-      ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+      ctx.font = 'bold 10.5px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
       ctx.fillText(item.label, swX + swSize + 10, swY + 11);
 
       ctx.fillStyle = '#64748b';
       ctx.font = '10px system-ui, -apple-system, sans-serif';
-      ctx.fillText(item.sub, swX + swSize + 10, swY + 21);
+      ctx.fillText(item.sub, swX + swSize + 10, swY + 22);
 
-      itemY += 36;
+      itemY += 44;
     });
 
     ctx.restore();
@@ -1439,6 +1482,8 @@ const captureScreenshot = async () => {
     const fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}`;
     bigImageControlInstance.value.options.fileName = fileName;
     bigImageControlInstance.value.options.exportFormat = 'jpeg';
+    (bigImageControlInstance.value as any).categoryTitle = props.title;
+    (bigImageControlInstance.value as any).activeYear = activeYear.value;
     if ((bigImageControlInstance.value as any)._formatSelect) {
       (bigImageControlInstance.value as any)._formatSelect.value = 'jpeg';
     }
@@ -1914,6 +1959,8 @@ onMounted(() => {
     maxScale: 3,
     minScale: 1
   });
+  (bigImage as any).categoryTitle = props.title;
+  (bigImage as any).activeYear = activeYear.value;
   bigImageControlInstance.value = bigImage;
   mapInst.addControl(bigImage);
 
@@ -1924,6 +1971,8 @@ watch([() => props.title, activeYear], () => {
   if (bigImageControlInstance.value) {
     const sanitizedTitle = props.title ? props.title.replace(/[']/g, '').replace(/[\/\s]+/g, '-') : 'Map-Visualization';
     bigImageControlInstance.value.options.fileName = `${sanitizedTitle}-${activeYear.value || 'Map'}`;
+    (bigImageControlInstance.value as any).categoryTitle = props.title;
+    (bigImageControlInstance.value as any).activeYear = activeYear.value;
   }
 }, { immediate: true });
 
@@ -1963,17 +2012,20 @@ onBeforeUnmount(() => {
     <main class="map-view">
       <!-- Floating Pill Tab Navigation inside Map View for Perfect Center Positioning -->
       <nav class="floating-tabs-nav">
+        <!-- 1. Energy Sources -->
         <button class="tab-pill-btn" :class="{ active: activeTab === 'sources' }" @click="emit('switchTab', 'sources')">
           <span class="tab-label-full">⚡ Energy Sources</span>
           <span class="tab-label-short">⚡ Sources</span>
         </button>
-        <button class="tab-pill-btn" :class="{ active: activeTab === 'uses' }" @click="emit('switchTab', 'uses')">
-          <span class="tab-label-full">🏭 Energy Uses</span>
-          <span class="tab-label-short">🏭 Uses</span>
-        </button>
+        <!-- 2. Energy Sources w/out Food -->
         <button class="tab-pill-btn" :class="{ active: activeTab === 'sources-no-food' }" @click="emit('switchTab', 'sources-no-food')">
           <span class="tab-label-full">⚡ Energy Sources w/out Food</span>
           <span class="tab-label-short">⚡ Sources (No Food)</span>
+        </button>
+        <!-- 3. Energy Uses -->
+        <button class="tab-pill-btn" :class="{ active: activeTab === 'uses' }" @click="emit('switchTab', 'uses')">
+          <span class="tab-label-full">🏭 Energy Uses</span>
+          <span class="tab-label-short">🏭 Uses</span>
         </button>
       </nav>
 
@@ -1995,7 +2047,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-show="!isLegendCollapsed" class="legend-body">
-            <!-- Import / Energy Sources -->
+            <!-- Import / Category Inflow -->
             <div class="legend-item">
               <svg class="legend-swatch" width="20" height="20">
                 <rect width="20" height="20" rx="4"
@@ -2003,12 +2055,12 @@ onBeforeUnmount(() => {
                   :stroke="themeMode === 'dark' ? '#f97316' : '#ea580c'" stroke-width="1.5" />
               </svg>
               <div class="legend-text">
-                <span class="legend-label">Energy Sources (Imports)</span>
+                <span class="legend-label">{{ props.title }} (Imports)</span>
                 <span class="legend-sub">Orange Diagonal Lines</span>
               </div>
             </div>
 
-            <!-- Export / Energy Uses -->
+            <!-- Export / Category Outflow -->
             <div class="legend-item">
               <svg class="legend-swatch" width="20" height="20">
                 <rect width="20" height="20" rx="4"
@@ -2016,7 +2068,7 @@ onBeforeUnmount(() => {
                   :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
               </svg>
               <div class="legend-text">
-                <span class="legend-label">Energy Uses (Exports)</span>
+                <span class="legend-label">{{ props.title }} (Exports)</span>
                 <span class="legend-sub">Green Dots</span>
               </div>
             </div>
@@ -2029,7 +2081,7 @@ onBeforeUnmount(() => {
                   :stroke="themeMode === 'dark' ? '#10b981' : '#059669'" stroke-width="1.5" />
               </svg>
               <div class="legend-text">
-                <span class="legend-label">Both (Import & Export)</span>
+                <span class="legend-label">Both (Imports & Exports)</span>
                 <span class="legend-sub">Orange Lines + Green Dots</span>
               </div>
             </div>
